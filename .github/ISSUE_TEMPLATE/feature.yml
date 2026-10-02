@@ -1,0 +1,48 @@
+name: Story or feature
+description: Propose one focused, testable change.
+title: "[Story]: "
+labels:
+  - story
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Keep this issue to one focused deliverable. Do not include credentials,
+        private documents, recordings, or live provider data.
+  - type: input
+    id: planning-id
+    attributes:
+      label: Planning ID
+      description: Backlog story ID, if this work is planned (for example, S23).
+      placeholder: S23
+    validations:
+      required: true
+  - type: textarea
+    id: goal
+    attributes:
+      label: Goal and scope
+      description: Describe the outcome and explicit exclusions.
+    validations:
+      required: true
+  - type: textarea
+    id: prerequisites
+    attributes:
+      label: Prerequisites and dependencies
+      description: List prerequisite issue IDs/statuses, provider contracts, and what must be verified before work starts. Write "None" only when there are no prerequisites.
+      placeholder: "S02 merged; Node and pnpm versions confirmed"
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: Provide observable, testable completion criteria.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Required test evidence
+      description: Name the exact synthetic fixtures/mocks and checks required. Live provider calls must be explicitly opt-in and cannot be default CI.
+    validations:
+      required: true
