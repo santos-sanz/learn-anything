@@ -4,7 +4,7 @@
 
 Use Node 22+ and the repository's pinned pnpm 10.20.0. Install with `pnpm install`; Convex 1.43.0, `convex-test` 0.0.60 and its Edge Runtime peers are exact versions in `packages/api/package.json` and `pnpm-lock.yaml`.
 
-Run `pnpm --filter @learn-anything/api convex:dev` from the repository root (equivalent to `npx convex dev` in `packages/api`). It attaches only a development deployment, pushes checked-in schema/functions and generates `packages/api/convex/_generated/` typed bindings. Generated bindings are ignored: a fresh checkout regenerates them with `pnpm --filter @learn-anything/api convex:codegen` after install.
+Run `pnpm --filter @learn-anything/api convex:dev` from the repository root (equivalent to `npx convex dev` in `packages/api`). It attaches only a development deployment, pushes checked-in schema/functions and regenerates `packages/api/convex/_generated/` typed bindings. The generated bindings are committed because the offline CI typecheck and `convex-test` suite need them without deployment credentials; regenerate and commit their diff whenever Convex functions or schema change.
 
 ## Synthetic reset and migration checks
 
