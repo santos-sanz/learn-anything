@@ -1,7 +1,11 @@
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
 
-/** Technical-only state. Business tables are introduced by S04. */
+/**
+ * S04 durable learning records. `projects` is the root of a project's scope;
+ * every child record repeats both ownerId and projectId so its access path can
+ * be tenant-scoped without a scan.
+ */
 export default defineSchema({
   schemaMetadata: defineTable({
     key: v.literal("primary"),
@@ -17,4 +21,45 @@ export default defineSchema({
     attempts: v.number(),
     updatedAt: v.number(),
   }).index("by_migration", ["migration"]),
+  projects: defineTable({
+    ownerId: v.string(),
+    name: v.string(),
+    createdAt: v.number(),
+    deletedAt: v.union(v.null(), v.number()),
+  }).index("by_owner", ["ownerId"]),
+  learningGoals: defineTable({
+    ownerId: v.string(),
+    projectId: v.id("projects"),
+    title: v.string(),
+    createdAt: v.number(),
+  }).index("by_owner_project", ["ownerId", "projectId"]),
+  learningSessions: defineTable({
+    ownerId: v.string(),
+    projectId: v.id("projects"),
+    sessionKey: v.string(),
+    createdAt: v.number(),
+    endedAt: v.union(v.null(), v.number()),
+  })
+    .index("by_owner_project", ["ownerId", "projectId"])
+    .index("by_owner_project_session_key", ["ownerId", "projectId", "sessionKey"]),
+  messages: defineTable({
+    ownerId: v.string(),
+    projectId: v.id("projects"),
+    sessionId: v.id("learningSessions"),
+    turnId: v.string(),
+    idempotencyKey: v.string(),
+    role: v.union(v.literal("learner"), v.literal("tutor")),
+    content: v.string(),
+    createdAt: v.number(),
+  })
+    .index("by_owner_project", ["ownerId", "projectId"])
+    .index("by_owner_project_session", ["ownerId", "projectId", "sessionId"])
+    .index("by_owner_project_turn", ["ownerId", "projectId", "turnId"])
+    .index("by_owner_project_idempotency", ["ownerId", "projectId", "idempotencyKey"]),
+  progressEvents: defineTable({
+    ownerId: v.string(),
+    projectId: v.id("projects"),
+    eventType: v.string(),
+    createdAt: v.number(),
+  }).index("by_owner_project", ["ownerId", "projectId"]),
 });

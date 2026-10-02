@@ -9,6 +9,7 @@
  */
 
 import type * as migrations from "../migrations.js";
+import type * as projects from "../projects.js";
 import type * as version from "../version.js";
 
 import type {
@@ -19,6 +20,7 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   migrations: typeof migrations;
+  projects: typeof projects;
   version: typeof version;
 }>;
 

@@ -11,11 +11,23 @@ Run `pnpm --filter @learn-anything/api convex:dev` from the repository root (equ
 Automated tests never call Convex or the network; they use in-memory `convex-test`. Run the reset twice and compatibility/retry checks with:
 
 ```sh
-pnpm test -- packages/api/tests/schema-lifecycle.test.ts
-pnpm test -- packages/api/tests/schema-lifecycle.test.ts
+pnpm test -- packages/api/tests/schema-lifecycle.test.ts packages/api/tests/projects.test.ts
+pnpm test -- packages/api/tests/schema-lifecycle.test.ts packages/api/tests/projects.test.ts
 ```
 
 Bootstrap first records a cursor, then a retry writes one version marker and completes. `checkCompatibility` requires the committed schema and function versions. Future data changes must be additive/optional, ship a bounded indexed resumable internal migration with a cursor, test retry and old/new compatibility, then tighten fields only after completion. Do not use SQL migrations or unbounded `.collect()` in production functions.
+
+## S04 project and conversation schema
+
+Schema/function version 2 adds `projects`, `learningGoals`, `learningSessions`, `messages`, and `progressEvents`. Document, ingestion-job, and chunk tables are deliberately deferred to S08/S09/S10: they are not placeholders in this release because their storage, upload and retry contracts are not ready. A project is the root scope (its Convex `_id` is its `projectId`); every child record repeats `ownerId` and `projectId`, and mutations verify both the referenced project and session before writing.
+
+`projects.by_owner` supports an owner's project list. Each child table's `by_owner_project` supports its scoped list and bounded cleanup; sessions add `by_owner_project_session_key` for idempotent session creation; messages add `by_owner_project_session`, `by_owner_project_turn`, and `by_owner_project_idempotency` for a session transcript, stable turn lookup, and retry deduplication. `turnId` and `idempotencyKey` are client-generated stable opaque strings; `createdAt`, `endedAt`, and `deletedAt` are generated inside Convex mutation handlers with the server's `Date.now()`, never accepted from the caller.
+
+S04 exports internal-only example mutations while S05/S06 establish `ctx.auth` identity. Their explicit `actorUserId` is a testable server-caller contract, not a public authorization path; no public function is exposed that trusts it. S05 must replace the placeholder with `ctx.auth.getUserIdentity()` and retain the ownership checks.
+
+Project deletion is two phase: `requestProjectDeletion` soft-deletes the root immediately, then bounded `deleteProjectBatch` calls hard-delete messages, sessions, goals, and progress events before hard-deleting the project. The batch is safe to retry and rejects a project that was not first soft-deleted by its owner. No document data exists in S04; S08/S10 must extend the same protocol explicitly for documents, jobs, chunks, and citations.
+
+The v2 marker is installed by the resumable `bootstrapSchemaV2` migration. It has no backfill because v1 has no business rows; rollback means redeploying the compatible v1 release only before v2 functions are in use, while a populated v2 deployment must remain on a compatible release until a separately tested migration exists.
 
 ## Deployment and secrets boundary
 
