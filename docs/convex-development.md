@@ -49,6 +49,20 @@ Sessions are pinned: 1 hour RS256 access JWT, 30 day total and inactive session 
 
 Offline tests: `packages/api/tests/auth.test.ts`, `auth-callback.test.ts`, `redirects.test.ts`, `agent-sessions.test.ts`, plus the UI view/form tests in `packages/app/tests`. The OAuth tests install an intercepting `fetch` and assert zero outbound requests; ordinary CI performs no network calls. Rollback: redeploy the previous release while the deployment still has no version 3 rows beyond additive tables, or clear the OAuth/email credentials to disable those methods without a code change.
 
+## S21 project dashboard, goal/mode selection
+
+Schema/function version 4 is additive: `projects` gains optional `goal` (trimmed free text) and `mode` (`language-practice` | `concept-learning`). Existing v3 rows stay valid and read as unset, so `bootstrapSchemaV4` has no backfill; it only re-stamps `schemaMetadata` (4 → compatible, older → upgrade, newer → rejected), and `packages/api/tests/schema-lifecycle.test.ts` covers clean reset, retry, v2/v3 → v4 upgrades and downgrade rejection.
+
+Function changes in `packages/api/convex/projects.ts` (identity still comes only from `ctx.auth` via S05/S06 `requireUserId`):
+
+- `createProject` accepts optional `goal`/`mode`; `name` is required, trimmed and capped at 100 characters, `goal` at 500.
+- `listProjects` and the new `getProject` return `{ _id, name, goal?, mode?, createdAt }`; `getProject` is owner-only and non-enumerating (`UNAUTHENTICATED`/`NOT_FOUND`).
+- `updateProject({ projectId, name?, goal?, mode? })` requires at least one field; an empty `goal` clears the selection, an omitted field is left unchanged. `mode` has no clear path yet (documented limit). Deletion keeps the S04 two-phase protocol: the app calls `requestProjectDeletion` once, then bounded `deleteProjectBatch(limit: 100)` until `completed`.
+
+`packages/app` grows the S21 screens: a hash router (`#/projects`, `#/projects/new`, `#/projects/:id`), `ProjectsProvider` with explicit loading/error/retry list state, Dashboard/NewProject/ProjectDetail screens, a shared labelled `ProjectForm`, and a native-`<dialog>` delete confirmation. The data port (`makeConvexProjectsBackend`) issues promise-based Convex calls, so list freshness comes from explicit reloads after mutations rather than live reactivity; every failure maps to fixed, safe copy through `mapDataError` (no backend message is interpolated). Anonymous visitors never reach the shell: `Root` renders the S06 sign-in view and leaves any deep link intact for after sign-in.
+
+Provider configuration stays server-side: the app reads only `VITE_CONVEX_URL` (plus Vite's own `DEV` flag), asserted by `packages/app/tests/no-provider-secrets.test.ts`, which also pins the empty `.env.example` files and the responsive viewport/CSS. `src/preview.tsx` is a DEV-only fixture renderer for local screenshot evidence; `import.meta.env.DEV` folds to `false` in `vite build`, so preview code and synthetic data never ship (verify with `VITE_CONVEX_URL=… pnpm --filter @learn-anything/app build` then grep `dist/` for `preview-`).
+
 ## Plan and operational limits
 
 The selected plan is **Convex Free**, never metered Starter. Checked limits: 0.5 GB database, 1 GB/month database I/O, 1 GB file storage, 1 GB/month data egress, 0.5 GB search storage, 3,000 query-GB/month search and 1 million function calls/month. Reconfirm actual plan and current limits at any authorized provisioning/deployment; quota exhaustion must fail visibly and must not trigger paid upgrade. Roll back a failed release by redeploying the previous compatible commit; do not downgrade a populated schema until data compatibility is assessed.
