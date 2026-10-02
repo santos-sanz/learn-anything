@@ -1,6 +1,6 @@
 # v0.1 development backlog
 
-Draft publication package. 4 epics and 26 stories. Stable planning IDs are not GitHub issue numbers. Replace references after creation. A `blocked` label means declared prerequisites are not yet complete; the factory must remove it only after verification.
+4 epics and 26 stories. Stable planning IDs map E01-E04 to GitHub #1-#4 and S01-S26 to #5-#30. Use EXECUTION_ORDER.md and order labels, not numerical issue order. A blocked story starts only after its prerequisites are closed and verified.
 
 ## E01: [Epic] Foundation, authentication and tenant isolation
 
@@ -107,14 +107,14 @@ None
 
 ## Acceptance criteria
 - [ ] ADR compares runtime upload/time limits and deployment options.
-- [ ] Documents single-user NaN deployment and the hosted multiuser gate.
+- [ ] Documents single-user NaN deployment and the hosted multiuser gate. Cloudflare hosts agents only on the Free plan; frontend hosting is separate, and Convex Auth is the sole application identity layer.
 - [ ] Records web/API/worker interfaces and versioned configuration.
 
 ## Required test evidence
 ADR review against official provider and runtime docs.
 
 ## Delivery
-One focused PR referencing this story. Include changed interfaces/migrations, tests and operational limits. Use synthetic fixtures only. No secrets or live account data. Do not provision paid resources or contact providers without separate authority.
+One focused PR referencing this story. Include changed interfaces/schema/data migrations, tests and operational limits. Use synthetic fixtures only. No secrets or live account data. Do not provision paid resources or contact providers without separate authority.
 
 
 ## S02: Scaffold TypeScript workspace and developer commands
@@ -139,32 +139,33 @@ S01
 Clean-checkout CI using synthetic config.
 
 ## Delivery
-One focused PR referencing this story. Include changed interfaces/migrations, tests and operational limits. Use synthetic fixtures only. No secrets or live account data. Do not provision paid resources or contact providers without separate authority.
+One focused PR referencing this story. Include changed interfaces/schema/data migrations, tests and operational limits. Use synthetic fixtures only. No secrets or live account data. Do not provision paid resources or contact providers without separate authority.
 
 
-## S03: Create reproducible Supabase local environment and migrations
+## S03: Set up reproducible Convex development backend and schema lifecycle
 
 Labels: backend, story, blocked
 
 ## Goal
-Add local Supabase configuration and versioned baseline migrations.
+Configure pinned Convex SDK, local development/test workflow, schema.ts and generated typed functions.
 
 ## Scope exclusions
-No production Supabase purchase or project provisioning.
+No Supabase, SQL, pgvector or paid backend provisioning.
 
 ## Prerequisites
 S02
 
 ## Acceptance criteria
-- [ ] Document local reset/start/stop and migrations.
-- [ ] Enable required Postgres extensions with version checks.
-- [ ] Seed only synthetic users/content and verify clean reset.
+- [ ] Document supported dev setup, code generation and clean synthetic seed/reset workflow.
+- [ ] Version schema/functions; changes needing data backfill have resumable migration functions and compatibility checks.
+- [ ] Development and production deployments are separate; deployment credentials never enter client assets.
+- [ ] Choose Convex Free, not metered Starter; record actual plan and limits before any authorized cloud provisioning.
 
 ## Required test evidence
-Run reset twice and migration drift check.
+Fresh-checkout generated types, synthetic reset twice, schema compatibility and migration retry tests.
 
 ## Delivery
-One focused PR referencing this story. Include changed interfaces/migrations, tests and operational limits. Use synthetic fixtures only. No secrets or live account data. Do not provision paid resources or contact providers without separate authority.
+One focused PR with tests and operational limits. Synthetic fixtures only. No secrets, paid provisioning or live account data.
 
 
 ## S04: Implement project and conversation data schema
@@ -172,102 +173,111 @@ One focused PR referencing this story. Include changed interfaces/migrations, te
 Labels: backend, story, blocked
 
 ## Goal
-Add projects, goals, sessions, messages and progress events with ownership constraints.
+Define Convex projects, goals, sessions, messages and progress_events with validators and indexes.
 
 ## Scope exclusions
-No team sharing or billing.
+No schema constraints assumed; no sharing or billing.
 
 ## Prerequisites
 S03
 
 ## Acceptance criteria
-- [ ] FKs prevent records being attached to another owner/project.
-- [ ] Create/update/delete lifecycle and indexes are documented.
-- [ ] Server timestamps, message roles and stable turn IDs support idempotence.
+- [ ] All private records include owner and project scope; mutation checks enforce referenced project ownership.
+- [ ] Indexes support owner/project access without full-table scans.
+- [ ] Stable turn IDs, server timestamps and duplicate detection prevent retry duplicates.
+- [ ] Schema evolution and deletion semantics documented.
 
 ## Required test evidence
-Migration tests including invalid cross-owner relationships.
+Validator and function tests for malformed and cross-owner references.
 
 ## Delivery
-One focused PR referencing this story. Include changed interfaces/migrations, tests and operational limits. Use synthetic fixtures only. No secrets or live account data. Do not provision paid resources or contact providers without separate authority.
+One focused PR with tests and operational limits. Synthetic fixtures only. No secrets, paid provisioning or live account data.
 
 
-## S05: Enforce RLS and private Storage tenant policies
+## S05: Enforce Convex function authorization and private file access
 
 Labels: security, story, blocked
 
 ## Goal
-Add owner-based row policies and project-scoped private Storage rules.
+Enforce authorization in every public Convex query, mutation, action and private-file HTTP action.
 
 ## Scope exclusions
-No service-role client in browser.
+No database RLS assumptions; no admin credential in browser; no private getUrl links.
 
 ## Prerequisites
 S04
 
 ## Acceptance criteria
-- [ ] Anonymous access is denied to all private data.
-- [ ] User A cannot SELECT/INSERT/UPDATE/DELETE user B rows or read/write B storage keys.
-- [ ] Backend privileged paths check user and project ownership before use.
-- [ ] Caches and search RPCs preserve tenant boundaries.
+- [ ] Use ctx.auth.getUserIdentity plus verified ownership, never client-supplied owner IDs as authority.
+- [ ] Anonymous requests denied and user A cannot read/mutate user B records, files, search or agent state.
+- [ ] Internal functions are not public; server credential paths still enforce owner/project checks.
+- [ ] Private file bytes served through authenticated authorized HTTP actions; storage.getUrl is bearer access and is not an expiring private link.
+- [ ] Cache keys and indexes preserve tenant boundaries.
 
 ## Required test evidence
-Two-user integration tests over tables, RPCs and signed storage links.
+Two-user negative tests across queries, mutations, actions, file endpoints, vector search and caches.
 
 ## Delivery
-One focused PR referencing this story. Include changed interfaces/migrations, tests and operational limits. Use synthetic fixtures only. No secrets or live account data. Do not provision paid resources or contact providers without separate authority.
+One focused PR with tests and operational limits. Synthetic fixtures only. No secrets, paid provisioning or live account data.
 
 
-## S06: Implement Supabase sign-in and verified API sessions
+## S06: Implement Convex Auth sign-in and verified agent sessions
 
 Labels: backend, story, blocked
 
 ## Goal
-Build sign-in, sign-out, refresh, callback and session validation.
+Implement Convex-compatible auth without requiring a paid external auth SaaS.
 
 ## Scope exclusions
-No assumptions that Cloudflare replaces Supabase Auth.
+No Cloudflare Access; no credential recovery or OAuth registration without separate authority.
 
 ## Prerequisites
 S05
 
 ## Acceptance criteria
-- [ ] Browser and server sessions work across refresh and expiry.
-- [ ] Backend verifies current session/token using approved Supabase verification, not untrusted client user IDs.
-- [ ] Errors do not disclose credentials; sign-out invalidates local session state.
-- [ ] Redirect allowlist and CSRF/secure-cookie approach documented for chosen framework.
+- [ ] Record auth choice in ADR: Convex Auth is beta and supports OAuth/password/email methods; pin version and test chosen frontend support.
+- [ ] Prefer OAuth GitHub/Google for initial implementation after configuration review; no external paid auth SaaS is required.
+- [ ] Email OTP/recovery needs a configured email provider; passwords without recovery are not a production default.
+- [ ] Queries/mutations/actions derive verified identity from ctx.auth; expiry/sign-out/refresh handled correctly.
+- [ ] Cloudflare agent handshake has verified scoped identity, expiry and reconnect checks; no email-only or user-ID-only binding.
 
 ## Required test evidence
-Auth integration tests for expired, forged and missing credentials.
+Auth tests for missing/forged/expired tokens, sign-out, refresh, callback allowlist and agent reconnect.
 
 ## Delivery
-One focused PR referencing this story. Include changed interfaces/migrations, tests and operational limits. Use synthetic fixtures only. No secrets or live account data. Do not provision paid resources or contact providers without separate authority.
+One focused PR with tests and operational limits. Synthetic fixtures only. No secrets, paid provisioning or live account data.
 
 
-## S07: Add optional Cloudflare Access perimeter validation
+## S07: Host project-scoped agents on Cloudflare Free plan
 
 Labels: infra, story, blocked
 
 ## Goal
-Protect restricted deployments and validate Access JWT in backend in addition to Supabase identity.
+Host learner agents with Cloudflare Agents SDK on Workers and SQLite-backed Durable Objects using the Workers Free plan.
 
 ## Scope exclusions
-Do not force a closed Access allowlist onto an unconfigured public learner app.
+No Cloudflare Access authentication gate, no general frontend hosting, no Workers AI inference, no paid-plan activation.
 
 ## Prerequisites
 S01, S06
 
 ## Acceptance criteria
-- [ ] Issuer, audience, signature, expiry and key rotation are validated.
-- [ ] Missing/forged Access tokens are denied when gate enabled.
-- [ ] Direct-origin bypass is blocked and documented.
-- [ ] Auth callbacks and preflight paths are tested; no mapping Access email directly to a trusted Supabase user.
+- [ ] Pin SDK/runtime versions and document official Free-plan compute/storage limits.
+- [ ] Validate Convex-compatible authenticated identity and project ownership before agent connections, state reads, calls and reconnects.
+- [ ] Agent instance IDs cannot expose another user's project or conversation.
+- [ ] Durable Object state contains only necessary scoped state; Convex remains the durable project/document store.
+- [ ] Use SQLite-backed Durable Objects compatible with Free plan; quota exhaustion fails safely with a visible message.
+- [ ] LLM, speech, embeddings and rerank call NaN through server-side adapters, not Workers AI.
+- [ ] No automatic paid upgrade or new spending.
 
 ## Required test evidence
-Negative JWT tests and deployment checklist with gate on/off.
+Agent connection/reconnect and two-user isolation tests; local SDK smoke test; quota exhaustion simulation and Free-plan configuration review.
 
 ## Delivery
-One focused PR referencing this story. Include changed interfaces/migrations, tests and operational limits. Use synthetic fixtures only. No secrets or live account data. Do not provision paid resources or contact providers without separate authority.
+One focused PR, synthetic fixtures only. Record tests and operational limits. No live secrets or paid provisioning.
+
+## Cross-runtime boundary
+Cloudflare stores agent runtime state only. Convex owns projects, files and messages. Choose a supported JWT/OIDC or short-lived scoped server-issued connection token after verifying the selected auth provider; do not assume Convex Auth tokens are automatically accepted by Cloudflare. Cloudflare may call Convex through authenticated user-scoped functions; shared server secrets are not a substitute for owner checks.
 
 
 ## S08: Implement safe document uploads and metadata
@@ -275,25 +285,26 @@ One focused PR referencing this story. Include changed interfaces/migrations, te
 Labels: backend, story, blocked
 
 ## Goal
-Accept private PDF, Markdown and plain text documents with project-scoped metadata.
+Upload private PDF, Markdown and plain text to Convex file storage with authenticated project metadata.
 
 ## Scope exclusions
-No arbitrary URL ingestion or OCR in v0.1.
+No arbitrary URL ingestion or OCR; no public bearer download URLs.
 
 ## Prerequisites
 S05, S06
 
 ## Acceptance criteria
-- [ ] Allowlist MIME/extension and validate file content with explicit configurable size limits.
-- [ ] Reject malformed/unsupported/oversize documents and unsafe filenames.
-- [ ] Uploads land in private project storage and produce one queued job.
-- [ ] UI/API exposes pending/failed/ready state without content leakage.
+- [ ] Use authenticated HTTP upload action for initial private files with configurable maximum <=10 MiB, below Convex HTTP 20 MB limit.
+- [ ] Validate MIME/extension/content, size and filename before saving; delete rejected/orphan files.
+- [ ] Store _storage ID only after project ownership and content checks; queue one idempotent job.
+- [ ] Downloads/citations require auth on every request and do not expose storage.getUrl.
+- [ ] Show pending/failed/ready and quota errors without content leakage.
 
 ## Required test evidence
-Synthetic valid/invalid file fixtures and two-user upload tests.
+Synthetic file fixtures, size/error/orphan cleanup and two-user upload/download tests.
 
 ## Delivery
-One focused PR referencing this story. Include changed interfaces/migrations, tests and operational limits. Use synthetic fixtures only. No secrets or live account data. Do not provision paid resources or contact providers without separate authority.
+One focused PR with tests and operational limits. Synthetic fixtures only. No secrets, paid provisioning or live account data.
 
 
 ## S09: Build resumable ingestion job runner
@@ -319,7 +330,7 @@ S08
 Worker crash/retry tests and synthetic PDF/text extraction fixtures.
 
 ## Delivery
-One focused PR referencing this story. Include changed interfaces/migrations, tests and operational limits. Use synthetic fixtures only. No secrets or live account data. Do not provision paid resources or contact providers without separate authority.
+One focused PR referencing this story. Include changed interfaces/schema/data migrations, tests and operational limits. Use synthetic fixtures only. No secrets or live account data. Do not provision paid resources or contact providers without separate authority.
 
 
 ## S10: Implement source-aware document chunking
@@ -345,7 +356,7 @@ S09
 Deterministic fixtures for long text, headings, PDF pages and adversarial instructions.
 
 ## Delivery
-One focused PR referencing this story. Include changed interfaces/migrations, tests and operational limits. Use synthetic fixtures only. No secrets or live account data. Do not provision paid resources or contact providers without separate authority.
+One focused PR referencing this story. Include changed interfaces/schema/data migrations, tests and operational limits. Use synthetic fixtures only. No secrets or live account data. Do not provision paid resources or contact providers without separate authority.
 
 
 ## S11: Add NaN adapters and document provider policy gate
@@ -353,7 +364,7 @@ One focused PR referencing this story. Include changed interfaces/migrations, te
 Labels: ai, story, blocked
 
 ## Goal
-Provide typed adapters for models, LLM streaming, embeddings, rerank, STT, translation and TTS.
+Use NaN for every documented AI stage: typed adapters for models, LLM tutor/text translation, LLM streaming, qwen3-embedding, rerank, Whisper STT/audio-to-English translation and Kokoro TTS.
 
 ## Scope exclusions
 No pooling the deployer personal key across learners; no real provider calls in ordinary CI.
@@ -363,8 +374,8 @@ S02
 
 ## Acceptance criteria
 - [ ] Base URL is https://api.nan.builders/v1; keys are server-side and redacted.
-- [ ] Contract tests cover timeouts, 429, unsupported models, malformed payloads and cancellation.
-- [ ] Separate nonstandard rerank endpoint from standard OpenAI client methods.
+- [ ] Contract tests cover timeouts, 429, unsupported models, malformed payloads and cancellation. Verify every AI capability routes through NaN; model/voice/language choices and quota controls are explicit.
+- [ ] Separate nonstandard rerank endpoint from standard OpenAI client methods. No silent provider fallback; document and surface unsupported capabilities.
 - [ ] Document personal non-transferable key terms and restrict initial live deployment to single user.
 - [ ] Hosted multiuser credential custody/provider agreement is explicitly unresolved, not automatically solved by BYOK.
 
@@ -372,34 +383,34 @@ S02
 Mock contract tests plus opt-in smoke test instructions; record current official API/model/terms docs.
 
 ## Delivery
-One focused PR referencing this story. Include changed interfaces/migrations, tests and operational limits. Use synthetic fixtures only. No secrets or live account data. Do not provision paid resources or contact providers without separate authority.
+One focused PR referencing this story. Include changed interfaces/schema/data migrations, tests and operational limits. Use synthetic fixtures only. No secrets or live account data. Do not provision paid resources or contact providers without separate authority.
 
 
-## S12: Resolve 4096-dimension vector storage and indexing
+## S12: Validate NaN 4096-dimension embeddings with Convex vector search
 
 Labels: ai, story, blocked
 
 ## Goal
-Test qwen3-embedding dimensions and choose compatible storage/retrieval strategy in an ADR.
+Test qwen3-embedding vectors against the pinned Convex SDK/deployment and implement compatible project-filtered vector index.
 
 ## Scope exclusions
-Do not blindly create vector(4096) HNSW or silently truncate vectors.
+No pgvector/HNSW SQL; no silent vector truncation or provider substitution.
 
 ## Prerequisites
 S03, S10, S11
 
 ## Acceptance criteria
-- [ ] Store embedding model/version/dimension with chunks; reject mismatched query vectors.
-- [ ] Demonstrate exact search for a small synthetic corpus.
-- [ ] Document HNSW limits: vector 2000 and halfvec 4000 according to Supabase docs; verify deployed extension version.
-- [ ] Evaluate supported lower dimensions or quantized candidates plus full rerank before enabling ANN.
-- [ ] Benchmark relevance and p95 latency with corpus size and hardware stated.
+- [ ] Current vector-search guide and platform limits allow dimensions 2-4096, but VectorIndexConfig API reference says 2-2048. Resolve with actual index creation/query spike; record SDK version and result.
+- [ ] Store vectors as v.array(v.float64()), with model/version/dimension metadata; reject mismatches.
+- [ ] If 4096 works, use full qwen3-embedding vectors and owner/project filterFields; if not, block and document provider-supported alternatives for decision.
+- [ ] Vector search runs in an action with authorization and filters before retrieval; recheck result ownership before returning context.
+- [ ] Record search quota: each search charges full index size in query-GB regardless of filters; benchmark corpus, relevance and p95 latency.
 
 ## Required test evidence
-Migration test plus deterministic retrieval benchmark; ADR approves v0.1 strategy.
+Synthetic 4096-dimensional create/index/query test, dimension rejection, two-user isolation and quota estimate; no paid live deployment without approval.
 
 ## Delivery
-One focused PR referencing this story. Include changed interfaces/migrations, tests and operational limits. Use synthetic fixtures only. No secrets or live account data. Do not provision paid resources or contact providers without separate authority.
+One focused PR with tests and operational limits. Synthetic fixtures only. No secrets, paid provisioning or live account data.
 
 
 ## S13: Build scoped retrieval, reranking and citation contract
@@ -416,7 +427,7 @@ No corpus-wide search across tenants or unbounded prompt context.
 S05, S10, S11, S12
 
 ## Acceptance criteria
-- [ ] Owner/project filters are applied before retrieval, not only after.
+- [ ] Owner/project filters are applied in the Convex vector-search filter, not only after.
 - [ ] Returns stable document/chunk/page/heading IDs and supports deleted/missing sources.
 - [ ] Empty corpus and low-confidence matches return explicit insufficient-evidence result.
 - [ ] Context budget/top-k and optional rerank fallback are deterministic.
@@ -424,8 +435,11 @@ S05, S10, S11, S12
 ## Required test evidence
 Two-user and two-project isolation tests plus gold-question relevance fixtures.
 
+## Provider routing
+Use NaN for this story's documented AI operations. Keep provider limits and unsupported features visible; do not silently substitute another provider.
+
 ## Delivery
-One focused PR referencing this story. Include changed interfaces/migrations, tests and operational limits. Use synthetic fixtures only. No secrets or live account data. Do not provision paid resources or contact providers without separate authority.
+One focused PR referencing this story. Include changed interfaces/schema/data migrations, tests and operational limits. Use synthetic fixtures only. No secrets or live account data. Do not provision paid resources or contact providers without separate authority.
 
 
 ## S14: Implement grounded tutor orchestration
@@ -451,8 +465,11 @@ S06, S11, S13
 ## Required test evidence
 Mock LLM tests for injection, fake citations, no evidence, retries and cancellation.
 
+## Provider routing
+Use NaN for this story's documented AI operations. Keep provider limits and unsupported features visible; do not silently substitute another provider.
+
 ## Delivery
-One focused PR referencing this story. Include changed interfaces/migrations, tests and operational limits. Use synthetic fixtures only. No secrets or live account data. Do not provision paid resources or contact providers without separate authority.
+One focused PR referencing this story. Include changed interfaces/schema/data migrations, tests and operational limits. Use synthetic fixtures only. No secrets or live account data. Do not provision paid resources or contact providers without separate authority.
 
 
 ## S15: Implement short-turn microphone capture and Whisper STT
@@ -479,7 +496,7 @@ S06, S11
 Browser tests plus fake transcription responses for timeout, 524 and 429.
 
 ## Delivery
-One focused PR referencing this story. Include changed interfaces/migrations, tests and operational limits. Use synthetic fixtures only. No secrets or live account data. Do not provision paid resources or contact providers without separate authority.
+One focused PR referencing this story. Include changed interfaces/schema/data migrations, tests and operational limits. Use synthetic fixtures only. No secrets or live account data. Do not provision paid resources or contact providers without separate authority.
 
 
 ## S16: Add Kokoro speech synthesis and playback
@@ -499,14 +516,14 @@ S11, S14
 - [ ] Voice/language availability is validated from provider config.
 - [ ] Supports play/pause/stop and respects browser autoplay restrictions.
 - [ ] Playback failure leaves complete transcript and retry action.
-- [ ] Audio uses authenticated or short-lived private delivery and is not committed/logged.
+- [ ] Audio uses authenticated Convex HTTP delivery with access checked on every request; do not expose storage.getUrl bearer links and is not committed/logged.
 - [ ] Cancelling a turn stops playback and rejects stale audio.
 
 ## Required test evidence
 UI tests for blocked autoplay, unsupported voice, errors and private audio access.
 
 ## Delivery
-One focused PR referencing this story. Include changed interfaces/migrations, tests and operational limits. Use synthetic fixtures only. No secrets or live account data. Do not provision paid resources or contact providers without separate authority.
+One focused PR referencing this story. Include changed interfaces/schema/data migrations, tests and operational limits. Use synthetic fixtures only. No secrets or live account data. Do not provision paid resources or contact providers without separate authority.
 
 
 ## S17: Assemble spoken conversation state machine
@@ -532,7 +549,7 @@ S14, S15, S16
 End-to-end two-turn voice test and race/cancellation/reconnect tests.
 
 ## Delivery
-One focused PR referencing this story. Include changed interfaces/migrations, tests and operational limits. Use synthetic fixtures only. No secrets or live account data. Do not provision paid resources or contact providers without separate authority.
+One focused PR referencing this story. Include changed interfaces/schema/data migrations, tests and operational limits. Use synthetic fixtures only. No secrets or live account data. Do not provision paid resources or contact providers without separate authority.
 
 
 ## S18: Implement explicit translation behaviour
@@ -557,8 +574,11 @@ S11, S15
 ## Required test evidence
 Contract tests for Whisper English output and bilingual LLM evaluation fixtures.
 
+## Provider routing
+Use NaN for this story's documented AI operations. Keep provider limits and unsupported features visible; do not silently substitute another provider.
+
 ## Delivery
-One focused PR referencing this story. Include changed interfaces/migrations, tests and operational limits. Use synthetic fixtures only. No secrets or live account data. Do not provision paid resources or contact providers without separate authority.
+One focused PR referencing this story. Include changed interfaces/schema/data migrations, tests and operational limits. Use synthetic fixtures only. No secrets or live account data. Do not provision paid resources or contact providers without separate authority.
 
 
 ## S19: Build language-practice tutor mode
@@ -584,7 +604,7 @@ S14, S18
 Synthetic beginner/intermediate dialogues and correction-style evaluations.
 
 ## Delivery
-One focused PR referencing this story. Include changed interfaces/migrations, tests and operational limits. Use synthetic fixtures only. No secrets or live account data. Do not provision paid resources or contact providers without separate authority.
+One focused PR referencing this story. Include changed interfaces/schema/data migrations, tests and operational limits. Use synthetic fixtures only. No secrets or live account data. Do not provision paid resources or contact providers without separate authority.
 
 
 ## S20: Build concept-learning tutor mode and progress events
@@ -610,7 +630,7 @@ S04, S14
 Synthetic concept corpus with teach-back and quiz answer fixtures.
 
 ## Delivery
-One focused PR referencing this story. Include changed interfaces/migrations, tests and operational limits. Use synthetic fixtures only. No secrets or live account data. Do not provision paid resources or contact providers without separate authority.
+One focused PR referencing this story. Include changed interfaces/schema/data migrations, tests and operational limits. Use synthetic fixtures only. No secrets or live account data. Do not provision paid resources or contact providers without separate authority.
 
 
 ## S21: Build accessible project dashboard and onboarding
@@ -636,7 +656,7 @@ S04, S06
 Component tests, two-user E2E and screenshots at desktop/mobile sizes.
 
 ## Delivery
-One focused PR referencing this story. Include changed interfaces/migrations, tests and operational limits. Use synthetic fixtures only. No secrets or live account data. Do not provision paid resources or contact providers without separate authority.
+One focused PR referencing this story. Include changed interfaces/schema/data migrations, tests and operational limits. Use synthetic fixtures only. No secrets or live account data. Do not provision paid resources or contact providers without separate authority.
 
 
 ## S22: Build document management and citation source viewer
@@ -662,7 +682,7 @@ S08, S13, S21
 E2E upload-to-ready and citation access-denied/deleted-source tests; visual screenshots.
 
 ## Delivery
-One focused PR referencing this story. Include changed interfaces/migrations, tests and operational limits. Use synthetic fixtures only. No secrets or live account data. Do not provision paid resources or contact providers without separate authority.
+One focused PR referencing this story. Include changed interfaces/schema/data migrations, tests and operational limits. Use synthetic fixtures only. No secrets or live account data. Do not provision paid resources or contact providers without separate authority.
 
 
 ## S23: Add CI quality gates and factory contribution templates
@@ -688,7 +708,7 @@ S02
 Test green and deliberately failing sample branches without committing secrets.
 
 ## Delivery
-One focused PR referencing this story. Include changed interfaces/migrations, tests and operational limits. Use synthetic fixtures only. No secrets or live account data. Do not provision paid resources or contact providers without separate authority.
+One focused PR referencing this story. Include changed interfaces/schema/data migrations, tests and operational limits. Use synthetic fixtures only. No secrets or live account data. Do not provision paid resources or contact providers without separate authority.
 
 
 ## S24: Add bounded observability, rate limits and privacy lifecycle
@@ -714,15 +734,15 @@ S08, S11, S17
 Load/error tests, log redaction assertions and deletion cascade integration tests.
 
 ## Delivery
-One focused PR referencing this story. Include changed interfaces/migrations, tests and operational limits. Use synthetic fixtures only. No secrets or live account data. Do not provision paid resources or contact providers without separate authority.
+One focused PR referencing this story. Include changed interfaces/schema/data migrations, tests and operational limits. Use synthetic fixtures only. No secrets or live account data. Do not provision paid resources or contact providers without separate authority.
 
 
-## S25: Create Cloudflare/Supabase deployment and recovery runbooks
+## S25: Document agent-only Cloudflare Free/Convex deployment and recovery
 
 Labels: infra, story, blocked
 
 ## Goal
-Document environment configuration, migrations, build/deploy, health checks and rollback.
+Document Cloudflare agent-only Free-plan configuration, Convex schema/data migrations, separate frontend-hosting boundary, health checks and rollback.
 
 ## Scope exclusions
 No cloud account provisioning, secret insertion or production activation in this issue alone.
@@ -732,8 +752,8 @@ S01, S07, S12, S23, S24
 
 ## Acceptance criteria
 - [ ] Secrets use deployment secret storage and are not bundled into client assets.
-- [ ] Separate dev/staging/prod configuration and auth redirect allowlists.
-- [ ] Describe Supabase migrations, worker retries, private storage and origin protection.
+- [ ] Separate dev/staging/prod configuration and Convex auth provider callback allowlists. Convex Free must not be confused with metered Starter; record backend quotas, usage alerts and recovery. Verify Workers Free and SQLite-backed Durable Objects; quota exhaustion must not trigger billing upgrades.
+- [ ] Describe Convex schema/data migrations, worker retries, private storage and Convex-authenticated agent entry points. Cloudflare hosts agents only; no Access gate or frontend hosting.
 - [ ] Document backup/restore and rollback limitations; failed health checks block release.
 - [ ] Restricted single-user deployment precedes any multiuser provider launch.
 
@@ -741,7 +761,7 @@ S01, S07, S12, S23, S24
 Deploy dry-run/config validation with fake values and runbook review.
 
 ## Delivery
-One focused PR referencing this story. Include changed interfaces/migrations, tests and operational limits. Use synthetic fixtures only. No secrets or live account data. Do not provision paid resources or contact providers without separate authority.
+One focused PR referencing this story. Include changed interfaces/schema/data migrations, tests and operational limits. Use synthetic fixtures only. No secrets or live account data. Do not provision paid resources or contact providers without separate authority.
 
 
 ## S26: Verify v0.1 end-to-end release acceptance
@@ -760,7 +780,7 @@ S05, S17, S19, S20, S21, S22, S23, S24, S25
 ## Acceptance criteria
 - [ ] User A signs in, creates project, uploads doc and completes two spoken grounded turns.
 - [ ] Language and concept modes both work, with transcript/citations and TTS playback.
-- [ ] User B cannot access A data via UI/API/RPC/storage/cache/audio.
+- [ ] User B cannot access A data via UI/Convex functions/file actions/vector search/agent state/cache/audio.
 - [ ] Microphone denial, provider 429/timeout, parser failure and cancellation recover without duplicate turns.
 - [ ] Inspect actual desktop/mobile screenshots and microphone/playback behaviour in supported browsers.
 - [ ] Release checklist records measured latency, known limits and remaining multiuser/realtime gates.
@@ -769,4 +789,4 @@ S05, S17, S19, S20, S21, S22, S23, S24, S25
 E2E report with synthetic fixtures, browser matrix, screenshots and opt-in provider smoke results.
 
 ## Delivery
-One focused PR referencing this story. Include changed interfaces/migrations, tests and operational limits. Use synthetic fixtures only. No secrets or live account data. Do not provision paid resources or contact providers without separate authority.
+One focused PR referencing this story. Include changed interfaces/schema/data migrations, tests and operational limits. Use synthetic fixtures only. No secrets or live account data. Do not provision paid resources or contact providers without separate authority.
