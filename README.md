@@ -69,6 +69,7 @@ Cloudflare agent state is session/runtime state only; Convex owns durable projec
 **No secrets in this repo.** No API keys, deployment-admin credentials, production URLs containing credentials, private documents, recordings, personal data or account exports. Commit only synthetic fixtures and empty/example configuration values.
 
 - Every public query, mutation, action and file HTTP action checks authenticated identity and project ownership.
+- `storage.getUrl()` is bearer access, not an authenticated private-document link: private document/audio bytes are served only by the authenticated `/private-files/:fileId` HTTP action after owner and project checks. Cache keys must begin with the authenticated owner and project (for example `ownerId:projectId:resource`); S12/S13 vector search must filter by both fields before retrieval and recheck every returned record's owner/project before use.
 - Convex deployment-admin credentials and NaN keys stay server-side; no admin client in browser.
 - Validate Convex identity and project ownership at agent entry points and on reconnect; clients cannot pick another learner's agent instance or read another project's state.
 - Rate-limit costly routes, cap uploads and audio duration, redact logs and prevent cross-tenant caches.
