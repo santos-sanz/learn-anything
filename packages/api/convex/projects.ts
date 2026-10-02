@@ -9,6 +9,30 @@ type ReadContext = MutationCtx | QueryCtx;
 type AuthContext = Pick<ActionCtx, "auth">;
 const timestamp = () => Date.now();
 
+const PROJECT_NAME_MAX = 100;
+const GOAL_MAX = 500;
+
+/** Learner-facing tracks selected during S21 onboarding; S19/S20 own the tutor behaviour. */
+const modeValidator = v.union(v.literal("language-practice"), v.literal("concept-learning"));
+type ProjectMode = "language-practice" | "concept-learning";
+type ProjectSummary = { _id: Id<"projects">; name: string; goal?: string; mode?: ProjectMode; createdAt: number };
+
+const projectSummary = (project: { _id: Id<"projects">; name: string; goal?: string; mode?: ProjectMode; createdAt: number }): ProjectSummary =>
+  ({ _id: project._id, name: project.name, goal: project.goal, mode: project.mode, createdAt: project.createdAt });
+
+function requireName(value: string): string {
+  const name = value.trim();
+  if (name === "" || name.length > PROJECT_NAME_MAX) throw new ConvexError({ code: "INVALID_ARGUMENT" });
+  return name;
+}
+
+/** Trims the goal; an empty string clears the stored selection. */
+function sanitizeGoal(value: string): string | undefined {
+  const goal = value.trim();
+  if (goal.length > GOAL_MAX) throw new ConvexError({ code: "INVALID_ARGUMENT" });
+  return goal === "" ? undefined : goal;
+}
+
 /**
  * Authentication failures are typed so callers never infer ownership. Identity
  * comes from `ctx.auth`: Convex Auth subjects are `userId|sessionId`, and the
@@ -33,16 +57,47 @@ async function requireOwnedSession(ctx: ReadContext, ownerId: string, projectId:
   return session;
 }
 
-export const createProject = mutation({ args: { name: v.string() }, returns: v.id("projects"), handler: async (ctx, args) => {
+const summaryValidator = v.object({ _id: v.id("projects"), name: v.string(), goal: v.optional(v.string()), mode: v.optional(modeValidator), createdAt: v.number() });
+
+export const createProject = mutation({ args: { name: v.string(), goal: v.optional(v.string()), mode: v.optional(modeValidator) }, returns: v.id("projects"), handler: async (ctx, args) => {
   const ownerId = await requireUserId(ctx);
-  return ctx.db.insert("projects", { ownerId, name: args.name, createdAt: timestamp(), deletedAt: null });
+  const name = requireName(args.name);
+  const goal = args.goal === undefined ? undefined : sanitizeGoal(args.goal);
+  return ctx.db.insert("projects", { ownerId, name, ...(goal === undefined ? {} : { goal }), ...(args.mode === undefined ? {} : { mode: args.mode }), createdAt: timestamp(), deletedAt: null });
 } });
 
-export const listProjects = query({ args: {}, returns: v.array(v.object({ _id: v.id("projects"), name: v.string() })), handler: async (ctx) => {
+export const listProjects = query({ args: {}, returns: v.array(summaryValidator), handler: async (ctx) => {
   const ownerId = await requireUserId(ctx);
   const projects = await ctx.db.query("projects").withIndex("by_owner", (q) => q.eq("ownerId", ownerId)).collect();
-  return projects.filter((project) => project.deletedAt === null).map(({ _id, name }) => ({ _id, name }));
+  return projects.filter((project) => project.deletedAt === null).map(projectSummary);
 } });
+
+/** Owner-only single-project read; foreign, deleted and anonymous requests are non-enumerating. */
+export const getProject = query({ args: { projectId: v.id("projects") }, returns: summaryValidator, handler: async (ctx, args) => {
+  const ownerId = await requireUserId(ctx);
+  return projectSummary(await requireOwnedProject(ctx, ownerId, args.projectId));
+} });
+
+/**
+ * Renames a project and/or updates its goal/mode selection. At least one field
+ * is required; an empty `goal` clears the selection. Ownership is re-derived
+ * from `ctx.auth`, never accepted as an argument.
+ */
+export const updateProject = mutation({
+  args: { projectId: v.id("projects"), name: v.optional(v.string()), goal: v.optional(v.string()), mode: v.optional(modeValidator) },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const ownerId = await requireUserId(ctx);
+    await requireOwnedProject(ctx, ownerId, args.projectId);
+    if (args.name === undefined && args.goal === undefined && args.mode === undefined) throw new ConvexError({ code: "INVALID_ARGUMENT" });
+    const patch: { name?: string; goal?: string | undefined; mode?: ProjectMode } = {};
+    if (args.name !== undefined) patch.name = requireName(args.name);
+    if (args.goal !== undefined) patch.goal = sanitizeGoal(args.goal);
+    if (args.mode !== undefined) patch.mode = args.mode;
+    await ctx.db.patch(args.projectId, patch);
+    return null;
+  },
+});
 
 export const createGoal = mutation({ args: { projectId: v.id("projects"), title: v.string() }, returns: v.id("learningGoals"), handler: async (ctx, args) => {
   const ownerId = await requireUserId(ctx); await requireOwnedProject(ctx, ownerId, args.projectId);
@@ -79,8 +134,21 @@ export const listProjectRecords = query({ args: { projectId: v.id("projects") },
   return { goals: goals.map(({ _id, title }) => ({ _id, title })), sessions: sessions.map(({ _id, sessionKey }) => ({ _id, sessionKey })), messages: messages.map(({ _id, content }) => ({ _id, content })), progressEvents: progressEvents.map(({ _id, eventType }) => ({ _id, eventType })) };
 } });
 
+/**
+ * Idempotent entry point of the S04 two-phase protocol: an owner may re-run it
+ * after an interrupted cleanup and it resumes instead of failing NOT_FOUND, so
+ * a retry can always finish the bounded `deleteProjectBatch` loop. Only the
+ * soft-delete step is repeated; a project whose row is already hard-deleted
+ * completes the invariant that a project row outlives none of its children.
+ * Reads and writes through `requireOwnedProject` still reject soft-deleted
+ * rows, and identity/ownership come only from `ctx.auth`.
+ */
 export const requestProjectDeletion = mutation({ args: { projectId: v.id("projects") }, returns: v.null(), handler: async (ctx, args) => {
-  const ownerId = await requireUserId(ctx); await requireOwnedProject(ctx, ownerId, args.projectId); await ctx.db.patch(args.projectId, { deletedAt: timestamp() }); return null;
+  const ownerId = await requireUserId(ctx);
+  const project = await ctx.db.get(args.projectId);
+  if (project === null || project.ownerId !== ownerId) throw new ConvexError({ code: "NOT_FOUND" });
+  if (project.deletedAt === null) await ctx.db.patch(args.projectId, { deletedAt: timestamp() });
+  return null;
 } });
 
 /** An already missing blob must never block the bounded, retry-safe delete loop. */
