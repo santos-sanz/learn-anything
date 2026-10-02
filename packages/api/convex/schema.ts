@@ -62,4 +62,14 @@ export default defineSchema({
     eventType: v.string(),
     createdAt: v.number(),
   }).index("by_owner_project", ["ownerId", "projectId"]),
+  /** Generic private storage ownership. S08 adds document metadata/ingestion separately. */
+  privateFiles: defineTable({
+    ownerId: v.string(),
+    projectId: v.id("projects"),
+    storageId: v.id("_storage"),
+    contentType: v.string(),
+    createdAt: v.number(),
+  })
+    .index("by_owner_project", ["ownerId", "projectId"])
+    .index("by_storage_id", ["storageId"]),
 });
