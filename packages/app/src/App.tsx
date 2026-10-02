@@ -1,17 +1,21 @@
 import { useAuthActions, useConvexAuth } from "@convex-dev/auth/react";
 import { api } from "@learn-anything/api/convex/_generated/api";
-import { useMutation } from "convex/react";
+import { useMutation, useQuery } from "convex/react";
 import { useState } from "react";
 
 import { deriveAuthView, mapAuthError } from "./authView.js";
+import { ProjectPicker } from "./ProjectPicker.js";
 import { SignInForm, type SignInSubmission } from "./SignInForm.js";
+import { TurnCapture } from "./TurnCapture.js";
 
 export function App() {
   const { isLoading, isAuthenticated } = useConvexAuth();
   const { signIn, signOut } = useAuthActions();
   const revokeConnectionTokens = useMutation(api.agentSessions.revokeAllConnectionTokens);
+  const projects = useQuery(api.projects.listProjects, {});
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const view = deriveAuthView({ isLoading, isAuthenticated });
 
   if (view === "loading") return <main role="status">Checking your session…</main>;
@@ -46,6 +50,12 @@ export function App() {
     }
   };
 
+  const projectList = projects ?? [];
+  const activeProjectId =
+    selectedProjectId !== null && projectList.some((project) => project._id === selectedProjectId)
+      ? selectedProjectId
+      : projectList[0]?._id ?? null;
+
   return (
     <main>
       <h1>Learn Anything</h1>
@@ -54,6 +64,17 @@ export function App() {
         Sign out
       </button>
       {error !== null && <p role="alert">{error}</p>}
+      <ProjectPicker selectedProjectId={activeProjectId} onSelect={setSelectedProjectId} />
+      {projects !== undefined &&
+        (activeProjectId === null ? (
+          <p>Create a project to record a microphone turn.</p>
+        ) : (
+          <TurnCapture
+            key={activeProjectId}
+            projectId={activeProjectId}
+            siteUrl={import.meta.env.VITE_CONVEX_SITE_URL}
+          />
+        ))}
     </main>
   );
 }
