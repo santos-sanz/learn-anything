@@ -14,9 +14,9 @@ This file defines the development workflow for this repository. It does not auth
 - Branch from current main: `feat/issue-N-short-name`, `fix/issue-N-short-name` or `docs/issue-N-short-name`.
 - Keep the change inside the issue scope. New features, broad refactors or architecture changes need a separate reviewed issue.
 - Use small descriptive commits. Verify the Git commit identity is a private GitHub noreply address before pushing; never publish a personal email unintentionally.
-- Add migrations rather than editing an applied migration. Test forward migration and reset using synthetic data.
+- Version Convex schema/functions. Use resumable data migrations/backfills and compatibility checks rather than SQL migration assumptions. Test upgrade and synthetic reset.
 - Do not commit secrets, live documents, raw audio, account exports or private fixtures. Use mock provider responses and example configuration with empty values.
-- Never weaken RLS, tenant isolation, session verification or privacy rules to make a test pass.
+- Never weaken Convex function authorization, tenant isolation, session verification or privacy rules to make a test pass.
 
 ## Validate
 
