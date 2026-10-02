@@ -1,6 +1,7 @@
 import { httpRouter } from "convex/server";
 
 import { auth } from "./auth";
+import { corsPreflightRoute } from "./cors";
 import {
   configuredUploadLimit,
   isIdempotencyKey,
@@ -14,6 +15,7 @@ import { internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import { httpAction } from "./_generated/server";
 import { requireUserId } from "./projects";
+import { transcribeTurnRoute } from "./stt";
 
 const http = httpRouter();
 
@@ -204,6 +206,16 @@ http.route({ pathPrefix: "/private-files/", method: "GET", handler: httpAction(a
     return jsonResponse({ code: "NOT_FOUND" }, 404);
   }
 }) });
+
+/**
+ * S15 speech-to-text: authenticated, project-scoped, request-scoped audio bytes.
+ * The page origin is cross-origin to `.convex.site`, so the browser preflights
+ * every `Authorization` + `audio/webm` request first: the `OPTIONS` route
+ * answers it without any authentication, and the `POST` route adds the
+ * allow-origin header through `transcribeTurnRoute` (see `cors.ts`).
+ */
+http.route({ path: "/stt/transcribe", method: "OPTIONS", handler: corsPreflightRoute });
+http.route({ path: "/stt/transcribe", method: "POST", handler: transcribeTurnRoute });
 
 auth.addHttpRoutes(http);
 

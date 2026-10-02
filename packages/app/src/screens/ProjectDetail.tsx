@@ -5,11 +5,12 @@ import { ProjectForm } from "../components/ProjectForm.js";
 import { useProjects } from "../data/ProjectsProvider.js";
 import type { ProjectSummary } from "../data/projects.js";
 import { navigate } from "../router.js";
+import { TurnCapture } from "../TurnCapture.js";
 import { dataErrorCode, mapDataError, modeLabel, toFormValues, toPatch, type ProjectFormValues } from "../view.js";
 
 type DetailState = { status: "loading" } | { status: "error"; error: unknown } | { status: "ready"; project: ProjectSummary };
 
-/** Project detail: read one owned project, edit goal/mode/name, delete with confirmation. */
+/** Project detail: read one owned project, edit goal/mode/name, record a microphone turn, delete with confirmation. */
 export function ProjectDetail({ id }: { id: string }) {
   const { get, update, remove } = useProjects();
   const [detail, setDetail] = useState<DetailState>({ status: "loading" });
@@ -141,6 +142,8 @@ export function ProjectDetail({ id }: { id: string }) {
           Changes saved.
         </p>
       )}
+
+      <TurnCapture projectId={id} siteUrl={import.meta.env.VITE_CONVEX_SITE_URL} />
 
       <section className="danger-zone" aria-labelledby="delete-project-heading">
         <h2 id="delete-project-heading">Delete project</h2>
