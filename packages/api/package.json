@@ -1,0 +1,14 @@
+{
+  "name": "@learn-anything/api",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "build": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@learn-anything/shared": "workspace:*",
+    "convex": "1.27.0"
+  }
+}

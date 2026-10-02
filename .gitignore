@@ -1,0 +1,11 @@
+node_modules/
+dist/
+.env
+.env.*
+!.env.example
+uploads/
+audio/
+*.wav
+*.mp3
+logs/
+.DS_Store

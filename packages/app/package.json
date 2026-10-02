@@ -1,0 +1,20 @@
+{
+  "name": "@learn-anything/app",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "build": "vite build"
+  },
+  "dependencies": {
+    "@learn-anything/shared": "workspace:*",
+    "react": "19.1.1",
+    "react-dom": "19.1.1",
+    "vite": "8.3.2"
+  },
+  "devDependencies": {
+    "@types/react": "19.1.16",
+    "@types/react-dom": "19.1.9"
+  }
+}
