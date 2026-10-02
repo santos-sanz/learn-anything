@@ -4,6 +4,7 @@ import { auth } from "./auth";
 import { internal } from "./_generated/api";
 import { httpAction } from "./_generated/server";
 import { requireUserId } from "./projects";
+import { transcribeTurnRoute } from "./stt";
 
 const http = httpRouter();
 
@@ -81,6 +82,9 @@ http.route({ pathPrefix: "/private-files/", method: "GET", handler: httpAction(a
     return jsonResponse({ code: "NOT_FOUND" }, 404);
   }
 }) });
+
+/** S15 speech-to-text: authenticated, project-scoped, request-scoped audio bytes. */
+http.route({ path: "/stt/transcribe", method: "POST", handler: transcribeTurnRoute });
 
 auth.addHttpRoutes(http);
 
