@@ -152,15 +152,20 @@ export class TurnController {
     for (const listener of this.listeners) listener();
   }
 
-  private scheduleTick(): void {
+  /**
+   * The next wake-up is clamped to the limit itself, so tick granularity can
+   * never push the stop past the configured 60 s budget: the recorder stops on
+   * the first tick at or beyond the limit, never later than it by one tick.
+   */
+  private scheduleTick(delayMs: number = RECORDING_TICK_MS): void {
     this.tickHandle = this.options.env.schedule(() => {
       this.tickHandle = null;
       if (this.state.phase !== "recording") return;
       const elapsedMs = this.options.env.now() - this.recordingStartedAt;
       this.dispatch({ type: "TICK", elapsedMs });
       if (elapsedMs >= MAX_RECORDING_MS) this.stopRecording();
-      else this.scheduleTick();
-    }, RECORDING_TICK_MS);
+      else this.scheduleTick(Math.min(RECORDING_TICK_MS, MAX_RECORDING_MS - elapsedMs));
+    }, delayMs);
   }
 
   private cancelTick(): void {

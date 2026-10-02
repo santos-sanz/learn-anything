@@ -1,8 +1,10 @@
 import { convexTest } from "convex-test";
+import { ConvexError } from "convex/values";
 import { afterEach, beforeEach, expect, test } from "vitest";
 
 import { api } from "../convex/_generated/api.js";
 import schema from "../convex/schema.js";
+import { classifyAuthorizeFailure } from "../convex/stt.js";
 import { installAuthTestEnv, TEST_ISSUER } from "./helpers/authEnv.js";
 
 installAuthTestEnv();
@@ -254,4 +256,29 @@ test("a missing server-side key fails visibly without contacting the provider", 
   expect(response.status).toBe(503);
   expect(await response.json()).toEqual({ code: "STT_NOT_CONFIGURED" });
   expect(providerCalls).toHaveLength(0);
+});
+
+test("an unexpected failure of the ownership check is a 5xx, never a client error", async () => {
+  // The stt module is deliberately absent from the module map, so resolving the
+  // internal ownership query fails the way any transient server-side fault
+  // would — before a single byte could reach the provider.
+  const modulesWithBrokenOwnershipCheck: Record<string, () => Promise<unknown>> = { ...modules };
+  delete modulesWithBrokenOwnershipCheck["../convex/stt.ts"];
+  const t = convexTest({ schema, modules: modulesWithBrokenOwnershipCheck });
+  const a = t.withIdentity(identity("owner-a|session-1"));
+  const projectId = await a.mutation(api.projects.createProject, { name: "Voice" });
+
+  const response = await a.fetch(turnPath(projectId), { method: "POST", headers: { "content-type": "audio/webm" }, body: AUDIO_BYTES });
+  expect(response.status).toBe(500);
+  expect(await response.json()).toEqual({ code: "INTERNAL_ERROR" });
+  expect(providerCalls).toHaveLength(0);
+});
+
+test("ownership-check failures keep their own statuses instead of collapsing to 400", () => {
+  expect(classifyAuthorizeFailure(new ConvexError({ code: "UNAUTHENTICATED" }))).toEqual({ status: 401, code: "UNAUTHENTICATED" });
+  expect(classifyAuthorizeFailure(new ConvexError({ code: "FORBIDDEN" }))).toEqual({ status: 403, code: "FORBIDDEN" });
+  expect(classifyAuthorizeFailure(new ConvexError({ code: "NOT_FOUND" }))).toEqual({ status: 404, code: "NOT_FOUND" });
+  expect(classifyAuthorizeFailure(new Error('Validator error: Expected ID for table "projects", got `nope`'))).toEqual({ status: 400, code: "INVALID_ARGUMENT" });
+  expect(classifyAuthorizeFailure(new Error("database is unreachable"))).toEqual({ status: 500, code: "INTERNAL_ERROR" });
+  expect(classifyAuthorizeFailure(new Error('Could not find module for: "stt"'))).toEqual({ status: 500, code: "INTERNAL_ERROR" });
 });

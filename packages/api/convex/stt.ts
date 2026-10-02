@@ -3,6 +3,7 @@ import { ConvexError, v } from "convex/values";
 import { NanAdapterError, NanClient } from "../../worker/src/nan/index";
 import { internal } from "./_generated/api";
 import { httpAction, internalQuery } from "./_generated/server";
+import { corsHeaders, readCorsAllowlist } from "./cors";
 import { requireOwnedProject, requireUserId } from "./projects";
 
 /**
@@ -20,8 +21,36 @@ const DEFAULT_PROVIDER_TIMEOUT_MS = 15_000; // matches the S11 NaN quota default
 const MAX_TURN_ID_CHARS = 128;
 type SpokenLanguage = "en" | "es"; // the S11 adapter's typed language set; S18 owns explicit translation
 
-function jsonResponse(body: unknown, status: number): Response {
-  return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json", "cache-control": "private, no-store" } });
+/**
+ * Maps a failure of the ownership check to an honest status: identity and
+ * authorization problems keep their `401`/`403`, a malformed id stays a `400`,
+ * and anything else — a transient query failure — is a server fault reported
+ * as `5xx` instead of being masked as a client error.
+ */
+export function classifyAuthorizeFailure(error: unknown): { status: number; code: string } {
+  const code = typedErrorCode(error);
+  if (code === "UNAUTHENTICATED" || code === "UNAUTHORIZED") return { status: 401, code: "UNAUTHENTICATED" };
+  if (code === "FORBIDDEN" || code === "NOT_AUTHORIZED") return { status: 403, code: "FORBIDDEN" };
+  if (code === "NOT_FOUND") return { status: 404, code: "NOT_FOUND" };
+  if (code === "INVALID_ARGUMENT" || isValidatorError(error)) return { status: 400, code: "INVALID_ARGUMENT" };
+  return { status: 500, code: "INTERNAL_ERROR" };
+}
+
+/** Recovers a typed `{ code }` from an error raised by another Convex function. */
+function typedErrorCode(error: unknown): string | null {
+  const data = (error as { data?: unknown } | null)?.data;
+  if (typeof data === "object" && data !== null && "code" in data) {
+    const code = (data as { code?: unknown }).code;
+    if (typeof code === "string") return code;
+  }
+  const message = error instanceof Error ? error.message : String(error);
+  return /"code"\s*:\s*"([A-Z_]+)"/.exec(message)?.[1] ?? null;
+}
+
+/** Argument validation failures are the caller's fault, so they stay `400`. */
+function isValidatorError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes("Validator error") || message.includes("Invalid Convex function arguments");
 }
 
 /**
@@ -91,14 +120,20 @@ function fileExtensionFor(contentType: string): string {
  * POST /stt/transcribe?projectId=&language=&turnId= with raw audio bytes in the
  * body. The browser authenticates with its Convex Auth access token
  * (`Authorization: Bearer`); identity and project ownership are re-derived
- * server-side on every request.
+ * server-side on every request. The page origin is cross-origin to
+ * `.convex.site`, so every response — success, denial and failure alike —
+ * carries the CORS headers from `cors.ts`.
  */
 export const transcribeTurnRoute = httpAction(async (ctx, request) => {
+  const cors = corsHeaders(request.headers.get("Origin"), readCorsAllowlist());
+  const json = (body: unknown, status: number): Response =>
+    new Response(JSON.stringify(body), { status, headers: { ...cors, "content-type": "application/json", "cache-control": "private, no-store" } });
+
   let ownerId: string;
   try {
     ownerId = await requireUserId(ctx);
   } catch {
-    return jsonResponse({ code: "UNAUTHENTICATED" }, 401);
+    return json({ code: "UNAUTHENTICATED" }, 401);
   }
 
   const url = new URL(request.url);
@@ -106,30 +141,31 @@ export const transcribeTurnRoute = httpAction(async (ctx, request) => {
   const language = url.searchParams.get("language") ?? "";
   const turnId = url.searchParams.get("turnId") ?? "";
   if (projectId === "" || (language !== "en" && language !== "es") || turnId.length > MAX_TURN_ID_CHARS) {
-    return jsonResponse({ code: "INVALID_ARGUMENT" }, 400);
+    return json({ code: "INVALID_ARGUMENT" }, 400);
   }
 
   let authorized: boolean;
   try {
     authorized = await ctx.runQuery(internal.stt.authorizeSttProject, { ownerId, projectId: projectId as never });
-  } catch {
-    return jsonResponse({ code: "INVALID_ARGUMENT" }, 400);
+  } catch (error) {
+    const failure = classifyAuthorizeFailure(error);
+    return json({ code: failure.code }, failure.status);
   }
-  if (!authorized) return jsonResponse({ code: "NOT_FOUND" }, 404);
+  if (!authorized) return json({ code: "NOT_FOUND" }, 404);
 
   const contentType = (request.headers.get("content-type") ?? "").split(";")[0]?.trim().toLowerCase() ?? "";
-  if (!SUPPORTED_AUDIO_TYPES.has(contentType)) return jsonResponse({ code: "UNSUPPORTED_CODEC" }, 415);
+  if (!SUPPORTED_AUDIO_TYPES.has(contentType)) return json({ code: "UNSUPPORTED_CODEC" }, 415);
 
   const declaredLength = request.headers.get("content-length");
   const declaredBytes = declaredLength === null ? Number.NaN : Number(declaredLength);
-  if (Number.isFinite(declaredBytes) && declaredBytes > MAX_AUDIO_BYTES) return jsonResponse({ code: "AUDIO_TOO_LARGE" }, 413);
+  if (Number.isFinite(declaredBytes) && declaredBytes > MAX_AUDIO_BYTES) return json({ code: "AUDIO_TOO_LARGE" }, 413);
 
   const bytes = new Uint8Array(await request.arrayBuffer());
-  if (bytes.byteLength === 0) return jsonResponse({ code: "INVALID_ARGUMENT" }, 400);
-  if (bytes.byteLength > MAX_AUDIO_BYTES) return jsonResponse({ code: "AUDIO_TOO_LARGE" }, 413);
+  if (bytes.byteLength === 0) return json({ code: "INVALID_ARGUMENT" }, 400);
+  if (bytes.byteLength > MAX_AUDIO_BYTES) return json({ code: "AUDIO_TOO_LARGE" }, 413);
 
   const apiKey = (process.env.NAN_API_KEY ?? "").trim();
-  if (apiKey === "") return jsonResponse({ code: "STT_NOT_CONFIGURED" }, 503);
+  if (apiKey === "") return json({ code: "STT_NOT_CONFIGURED" }, 503);
   const deployerId = (process.env.NAN_DEPLOYER_ID ?? "").trim();
 
   const client = new NanClient({
@@ -144,13 +180,13 @@ export const transcribeTurnRoute = httpAction(async (ctx, request) => {
       language as SpokenLanguage,
       { signal: request.signal },
     );
-    if (result.text.trim() === "") return jsonResponse({ code: "SILENCE" }, 422);
-    return jsonResponse({ turnId, text: result.text, language: result.language, duration: result.duration ?? null }, 200);
+    if (result.text.trim() === "") return json({ code: "SILENCE" }, 422);
+    return json({ turnId, text: result.text, language: result.language, duration: result.duration ?? null }, 200);
   } catch (error) {
     const failure = mapProviderFailure(error);
     const body: Record<string, unknown> = { code: failure.code };
     if (failure.retryAfterMs !== undefined) body.retryAfterMs = failure.retryAfterMs;
     if (failure.upstreamStatus !== undefined) body.upstreamStatus = failure.upstreamStatus;
-    return jsonResponse(body, failure.status);
+    return json(body, failure.status);
   }
 });

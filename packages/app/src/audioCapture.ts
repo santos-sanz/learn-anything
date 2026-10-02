@@ -45,8 +45,12 @@ export function formatElapsed(ms: number): string {
 
 /**
  * HTTP actions live on the deployment's `.convex.site` origin while the
- * Convex client uses `.convex.cloud`; local dev serves both on the same
- * origin, so it passes through unchanged. An explicit override wins.
+ * Convex client uses `.convex.cloud`. Deriving one origin from the other only
+ * picks the URL: the page itself (the Vite dev server in development, the
+ * deployed app in production) is always cross-origin to `.convex.site`, so the
+ * browser applies CORS — the `Authorization` header forces a preflight
+ * `OPTIONS`, and `convex/cors.ts` allows only origins configured through
+ * `SITE_URL`/`AUTH_REDIRECT_URIS`. An explicit override wins.
  */
 export function resolveConvexSiteUrl(convexUrl: string | undefined, override?: string | undefined): string {
   const trimmedOverride = (override ?? "").trim();

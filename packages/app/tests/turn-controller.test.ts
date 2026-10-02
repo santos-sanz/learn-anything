@@ -210,6 +210,51 @@ test("recording stops automatically at the configured 60 second limit", async ()
   expect(recordedStates.at(-1)).toMatchObject({ elapsedMs: MAX_RECORDING_MS });
 });
 
+test("a late tick cannot push the auto-stop past the configured 60 second limit", async () => {
+  let clock = 0;
+  let handle = 0;
+  let firstWake = true;
+  let stoppedAt: number | null = null;
+  const pending: { at: number; handle: number; run: () => void }[] = [];
+  const harness = createHarness({
+    now: () => clock,
+    schedule: (callback, delayMs) => {
+      handle += 1;
+      // The first wake-up runs 100 ms late, which shifts every later tick by
+      // the same amount: an unclamped 250 ms granularity would then stop at
+      // 60100 ms instead of at the limit.
+      const lateness = firstWake ? 100 : 0;
+      firstWake = false;
+      pending.push({ at: clock + delayMs + lateness, handle, run: callback });
+      return handle;
+    },
+    cancelSchedule: (scheduled) => {
+      const index = pending.findIndex((entry) => entry.handle === (scheduled as number));
+      if (index >= 0) pending.splice(index, 1);
+    },
+    transcribe: async () => {
+      stoppedAt = clock;
+      return { ok: true, text: "hello turn", detectedLanguage: "es", durationMs: 1.5, turnId: "turn-1" };
+    },
+  });
+
+  await harness.controller.start();
+  for (;;) {
+    pending.sort((a, b) => a.at - b.at);
+    const due = pending[0];
+    if (due === undefined || due.at > MAX_RECORDING_MS + RECORDING_TICK_MS) break;
+    pending.shift();
+    clock = Math.max(clock, due.at);
+    due.run();
+  }
+  await waitUntil(() => stoppedAt !== null, "stop at the limit");
+
+  expect(stoppedAt).not.toBeNull();
+  expect(stoppedAt ?? Number.POSITIVE_INFINITY).toBeLessThanOrEqual(MAX_RECORDING_MS);
+  expect(harness.spies.recorderStops).toBe(1);
+  expect(harness.controller.getSnapshot().phase).toBe("transcript");
+});
+
 test("abort during transcription cancels the pending request and frees the audio", async () => {
   const harness = createHarness({
     transcribe: (input) =>
