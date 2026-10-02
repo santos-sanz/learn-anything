@@ -4,11 +4,18 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
+    "convex:codegen": "convex codegen",
+    "convex:dev": "convex dev",
     "typecheck": "tsc --noEmit",
     "build": "tsc --noEmit"
   },
   "dependencies": {
     "@learn-anything/shared": "workspace:*",
-    "convex": "1.27.0"
+    "convex": "1.43.0"
+  },
+  "devDependencies": {
+    "@edge-runtime/jest-environment": "4.0.0",
+    "@edge-runtime/vm": "5.0.0",
+    "convex-test": "0.0.60"
   }
 }
