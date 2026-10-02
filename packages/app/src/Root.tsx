@@ -6,7 +6,7 @@ import type { ProjectsBackend } from "./data/projects.js";
 import { Dashboard } from "./screens/Dashboard.js";
 import { NewProject } from "./screens/NewProject.js";
 import { ProjectDetail } from "./screens/ProjectDetail.js";
-import { useHashRoute } from "./router.js";
+import { serializeRoute, useHashRoute } from "./router.js";
 import { SignInForm, type SignInSubmission } from "./SignInForm.js";
 
 /**
@@ -23,18 +23,21 @@ export type AuthSession = {
 
 function Shell({ busy, error, onSignOut }: { busy: boolean; error: string | null; onSignOut: () => void | Promise<void> }) {
   const route = useHashRoute();
+  const routeKey = serializeRoute(route);
   const mainRef = useRef<HTMLElement>(null);
   const isFirstRender = useRef(true);
 
   // Move focus into the main region on navigation so keyboard and screen
-  // reader users land on the new view instead of staying in the header.
+  // reader users land on the new view instead of staying in the header. The
+  // dependency is the stable route identity, not a fresh route object, so the
+  // effect only re-runs when the location actually changes.
   useEffect(() => {
     if (isFirstRender.current) {
       isFirstRender.current = false;
       return;
     }
     mainRef.current?.focus();
-  }, [route]);
+  }, [routeKey]);
 
   return (
     <div className="app">

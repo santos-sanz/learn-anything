@@ -1,4 +1,4 @@
-import { useSyncExternalStore } from "react";
+import { useMemo, useSyncExternalStore } from "react";
 
 /** Hash routes for the S21 dashboard; deep links survive sign-in untouched. */
 export type Route = { name: "dashboard" } | { name: "new-project" } | { name: "project"; id: string };
@@ -36,5 +36,7 @@ const readHash = () => window.location.hash;
 
 export function useHashRoute(): Route {
   const hash = useSyncExternalStore(subscribeHash, readHash, () => "#/projects");
-  return parseRoute(hash);
+  // Parsed routes are memoized so consumers get a stable identity for an
+  // unchanged hash instead of a fresh object on every render.
+  return useMemo(() => parseRoute(hash), [hash]);
 }
