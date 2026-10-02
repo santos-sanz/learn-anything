@@ -1,0 +1,28 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "learn-anything-agent",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "LearnerAgent",
+        "class_name": "LearnerAgent"
+      }
+    ]
+  },
+  "exports": {
+    "LearnerAgent": {
+      "type": "durable-object",
+      "storage": "sqlite"
+    }
+  },
+  "vars": {
+    "CONVEX_URL": "",
+    "NAN_DEPLOYER_ID": ""
+  },
+  "observability": {
+    "enabled": true
+  }
+}
