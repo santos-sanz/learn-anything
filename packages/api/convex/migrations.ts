@@ -30,11 +30,12 @@ export const checkCompatibility = internalQuery({
 });
 
 /**
- * A small resumable migration template. First call records progress; a retry
- * completes the same run without duplicating state. Real backfills use bounded
- * indexed batches in place of this cursor stage.
+ * S08 resumable marker migration for schema/function version 4 (documents and
+ * ingestionJobs tables). It has no backfill because the new tables start empty;
+ * the first call records progress and a retry completes without duplicating
+ * state. Real backfills use bounded indexed batches in place of this stage.
  */
-export const bootstrapSchemaV3 = internalMutation({
+export const bootstrapSchemaV4 = internalMutation({
   args: {},
   returns: migrationResult,
   handler: async (ctx) => {
