@@ -1,6 +1,7 @@
-import { ConvexError } from "convex/values";
-
+import { dataErrorCode, DELETION_INCOMPLETE } from "./errors.js";
 import type { LearningMode, ProjectPatch, ProjectSummary } from "./data/projects.js";
+
+export { dataErrorCode };
 
 export type ProjectFormValues = { name: string; goal: string; mode: LearningMode | null };
 
@@ -45,27 +46,13 @@ export function toFormValues(project: ProjectSummary): ProjectFormValues {
   return { name: project.name, goal: project.goal ?? "", mode: project.mode ?? null };
 }
 
-/** Typed Convex error codes travel in `error.data`; message fallback covers older shapes. */
-export function dataErrorCode(error: unknown): string | null {
-  if (error instanceof ConvexError) {
-    const data: unknown = error.data;
-    if (typeof data === "object" && data !== null && "code" in data && typeof (data as { code: unknown }).code === "string") {
-      return (data as { code: string }).code;
-    }
-  }
-  const message = error instanceof Error ? error.message : String(error);
-  for (const code of ["UNAUTHENTICATED", "NOT_FOUND", "INVALID_ARGUMENT"]) {
-    if (message.includes(code)) return code;
-  }
-  return null;
-}
-
 /** Fixed, safe copy: raw backend messages can leak internals and help nobody. */
 export function mapDataError(error: unknown, context: "list" | "form" | "project" = "form"): string {
   const code = dataErrorCode(error);
   if (code === "UNAUTHENTICATED") return "Your session has ended. Sign in again to continue.";
   if (code === "NOT_FOUND") return context === "project" ? "This project doesn’t exist or isn’t yours." : "That project is no longer available.";
   if (code === "INVALID_ARGUMENT") return "Check the highlighted fields and try again.";
+  if (code === DELETION_INCOMPLETE) return "Deleting this project is taking longer than expected. Try again to finish the cleanup.";
   if (context === "list") return "Couldn’t load your projects.";
   if (context === "project") return "Couldn’t load this project.";
   return "That didn’t go through. Check your connection and try again.";

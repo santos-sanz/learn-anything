@@ -134,8 +134,21 @@ export const listProjectRecords = query({ args: { projectId: v.id("projects") },
   return { goals: goals.map(({ _id, title }) => ({ _id, title })), sessions: sessions.map(({ _id, sessionKey }) => ({ _id, sessionKey })), messages: messages.map(({ _id, content }) => ({ _id, content })), progressEvents: progressEvents.map(({ _id, eventType }) => ({ _id, eventType })) };
 } });
 
+/**
+ * Idempotent entry point of the S04 two-phase protocol: an owner may re-run it
+ * after an interrupted cleanup and it resumes instead of failing NOT_FOUND, so
+ * a retry can always finish the bounded `deleteProjectBatch` loop. Only the
+ * soft-delete step is repeated; a project whose row is already hard-deleted
+ * completes the invariant that a project row outlives none of its children.
+ * Reads and writes through `requireOwnedProject` still reject soft-deleted
+ * rows, and identity/ownership come only from `ctx.auth`.
+ */
 export const requestProjectDeletion = mutation({ args: { projectId: v.id("projects") }, returns: v.null(), handler: async (ctx, args) => {
-  const ownerId = await requireUserId(ctx); await requireOwnedProject(ctx, ownerId, args.projectId); await ctx.db.patch(args.projectId, { deletedAt: timestamp() }); return null;
+  const ownerId = await requireUserId(ctx);
+  const project = await ctx.db.get(args.projectId);
+  if (project === null || project.ownerId !== ownerId) throw new ConvexError({ code: "NOT_FOUND" });
+  if (project.deletedAt === null) await ctx.db.patch(args.projectId, { deletedAt: timestamp() });
+  return null;
 } });
 
 /** An already missing blob must never block the bounded, retry-safe delete loop. */

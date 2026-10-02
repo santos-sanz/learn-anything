@@ -2,6 +2,8 @@ import { api } from "@learn-anything/api/convex/_generated/api";
 import type { Id } from "@learn-anything/api/convex/_generated/dataModel";
 import type { ConvexReactClient } from "convex/react";
 
+import { dataErrorCode, DELETION_INCOMPLETE } from "../errors.js";
+
 /** The two learner tracks selectable in S21; S19/S20 implement the tutor behaviour. */
 export type LearningMode = "language-practice" | "concept-learning";
 
@@ -68,14 +70,33 @@ export function makeConvexProjectsBackend(client: ConvexClient): ProjectsBackend
     async update(id, patch) {
       await client.mutation(api.projects.updateProject, { projectId: asProjectId(id), name: patch.name, goal: patch.goal, mode: patch.mode });
     },
+    /**
+     * Resumable and idempotent: a retry after a failed, interrupted or capped
+     * run repeats the soft-delete step (the server accepts an already
+     * soft-deleted project it owns) and the bounded batches continue from the
+     * records that are still there. NOT_FOUND can only mean the project row is
+     * already hard-deleted, and a project row never outlives any of its child
+     * rows, so that is a completed deletion rather than an error.
+     */
     async remove(id) {
       const projectId = asProjectId(id);
-      await client.mutation(api.projects.requestProjectDeletion, { projectId });
+      try {
+        await client.mutation(api.projects.requestProjectDeletion, { projectId });
+      } catch (caught) {
+        if (dataErrorCode(caught) === "NOT_FOUND") return;
+        throw caught;
+      }
       for (let attempt = 0; attempt < DELETE_MAX_BATCHES; attempt += 1) {
-        const batch = await client.mutation(api.projects.deleteProjectBatch, { projectId, limit: DELETE_BATCH_LIMIT });
+        let batch: { completed: boolean; deleted: number };
+        try {
+          batch = await client.mutation(api.projects.deleteProjectBatch, { projectId, limit: DELETE_BATCH_LIMIT });
+        } catch (caught) {
+          if (dataErrorCode(caught) === "NOT_FOUND") return;
+          throw caught;
+        }
         if (batch.completed) return;
       }
-      throw new Error("Project deletion did not finish; retry from the dashboard.");
+      throw new Error(`${DELETION_INCOMPLETE}: project deletion did not finish within the batch cap; retry to resume.`);
     },
   };
 }

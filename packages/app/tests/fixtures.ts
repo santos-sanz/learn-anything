@@ -11,9 +11,14 @@ export type FixtureState = {
   created: ProjectDraft[];
   updated: { id: string; patch: ProjectPatch }[];
   removed: string[];
-  failCreate: Error | null;
-  failUpdate: Error | null;
+  /** Ids that took the soft-delete step but whose cleanup never finished. */
+  softDeleted: string[];
+  /** Fails the delete before any state change (as if the request never reached the server). */
   failRemove: Error | null;
+  /** Fails the delete after the soft-delete step landed, mirroring an interrupted batch loop. */
+  failRemoveMidDelete: Error | null;
+  failUpdate: Error | null;
+  failCreate: Error | null;
   failGet: boolean;
 };
 
@@ -36,9 +41,11 @@ export function fixtureBackend(seed: ProjectSummary[] = []): { backend: Projects
     created: [],
     updated: [],
     removed: [],
+    softDeleted: [],
     failCreate: null,
     failUpdate: null,
     failRemove: null,
+    failRemoveMidDelete: null,
     failGet: false,
   };
 
@@ -73,8 +80,16 @@ export function fixtureBackend(seed: ProjectSummary[] = []): { backend: Projects
     },
     async remove(id) {
       if (state.failRemove !== null) throw state.failRemove;
-      state.removed.push(id);
-      state.projects = state.projects.filter((project) => project.id !== id);
+      // Phase 1 mirrors `requestProjectDeletion`: the soft-delete hides the
+      // project from the next list load even though its rows still exist.
+      if (!state.softDeleted.includes(id)) {
+        state.softDeleted.push(id);
+        state.projects = state.projects.filter((project) => project.id !== id);
+      }
+      if (state.failRemoveMidDelete !== null) throw state.failRemoveMidDelete;
+      // Phase 2 mirrors the bounded batches; a re-run resumes this cleanup.
+      state.softDeleted = state.softDeleted.filter((pending) => pending !== id);
+      if (!state.removed.includes(id)) state.removed.push(id);
     },
   };
 

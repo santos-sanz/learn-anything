@@ -110,7 +110,7 @@ test("Escape fires the dialog cancel event and closes without deleting", async (
   expect(state.removed).toEqual([]);
 });
 
-test("a failed delete stays in the dialog with an announced, retryable error", async () => {
+test("a delete that fails before any state change stays in the dialog with an announced, retryable error", async () => {
   const { backend, state } = fixtureBackend([project({ id: "p1", name: "Stuck project" })]);
   state.failRemove = new Error("fixture remove failed");
   const user = userEvent.setup();
@@ -124,10 +124,40 @@ test("a failed delete stays in the dialog with an announced, retryable error", a
   const error = await within(dialog).findByRole("alert");
   expect(text(error)).toContain("That didn’t go through.");
   expect(screen.getByRole("heading", { name: "Stuck project" })).toBeTruthy();
+  expect(state.softDeleted).toEqual([]);
 
   state.failRemove = null;
   await user.click(within(dialog).getByRole("button", { name: "Delete project" }));
   await waitFor(() => expect(state.removed).toEqual(["p1"]));
+});
+
+test("a delete that fails after the soft-delete keeps the project visible and the retry finishes it", async () => {
+  const { backend, state } = fixtureBackend([project({ id: "p1", name: "Half-deleted project" })]);
+  state.failRemoveMidDelete = new Error("connection dropped mid-cleanup");
+  const user = userEvent.setup();
+  renderDashboard(backend);
+  await screen.findByRole("heading", { name: "Half-deleted project" });
+
+  await user.click(screen.getByRole("button", { name: "Delete Half-deleted project" }));
+  const dialog = await screen.findByRole("alertdialog");
+  await user.click(within(dialog).getByRole("button", { name: "Delete project" }));
+
+  // The failure lands after the soft-delete, so the rows are stranded server-side:
+  // the dialog must keep an announced, actionable error instead of hiding the card.
+  const error = await within(dialog).findByRole("alert");
+  expect(text(error)).toContain("That didn’t go through.");
+  expect(text(error)).toContain("try again");
+  expect(state.softDeleted).toEqual(["p1"]);
+  expect(state.removed).toEqual([]);
+  expect(screen.getByRole("heading", { name: "Half-deleted project" })).toBeTruthy();
+  expect(within(dialog).getByRole("button", { name: "Delete project" })).toBeTruthy();
+
+  // The retry resumes the same cleanup: it completes once, with no orphan left behind.
+  state.failRemoveMidDelete = null;
+  await user.click(within(dialog).getByRole("button", { name: "Delete project" }));
+  await waitFor(() => expect(state.removed).toEqual(["p1"]));
+  expect(state.softDeleted).toEqual([]);
+  expect(await screen.findByRole("heading", { name: "Create your first project" })).toBeTruthy();
 });
 
 test("every dashboard control is reachable with Tab in reading order", async () => {

@@ -76,3 +76,46 @@ test("goal/mode selection accepts exactly the two S21 learner tracks", async () 
   await expect(a.mutation(api.projects.createProject, { name: "Invalid", mode: "quiz" as never })).rejects.toThrow();
   await expect(a.mutation(api.projects.updateProject, { projectId: language, mode: "tutor" as never })).rejects.toThrow();
 });
+
+test("createProject and updateProject reject empty and whitespace-only names", async () => {
+  const t = convexTest({ schema, modules }); const a = t.withIdentity(identity("a"));
+  const blank = ["", "   ", " \t\n ", "\u00a0\u00a0"];
+  for (const name of blank) await expect(a.mutation(api.projects.createProject, { name })).rejects.toThrow("INVALID_ARGUMENT");
+  const projectId = await a.mutation(api.projects.createProject, { name: "Keep me" });
+  for (const name of blank) await expect(a.mutation(api.projects.updateProject, { projectId, name })).rejects.toThrow("INVALID_ARGUMENT");
+  await expect(a.mutation(api.projects.createProject, { name: "x".repeat(101) })).rejects.toThrow("INVALID_ARGUMENT");
+  await expect(a.mutation(api.projects.updateProject, { projectId, name: "y".repeat(101) })).rejects.toThrow("INVALID_ARGUMENT");
+  await expect(a.query(api.projects.getProject, { projectId })).resolves.toMatchObject({ name: "Keep me" });
+  await expect(a.query(api.projects.listProjects, {})).resolves.toHaveLength(1);
+});
+
+test("an interrupted deletion resumes: the soft-delete re-run succeeds and the batches finish with no orphans", async () => {
+  const t = convexTest({ schema, modules }); const a = t.withIdentity(identity("a")); const b = t.withIdentity(identity("b"));
+  const projectId = await a.mutation(api.projects.createProject, { name: "Resume me", goal: "hold a five-minute chat", mode: "language-practice" });
+  const session = await a.mutation(api.projects.createSession, { projectId, sessionKey: "s" });
+  await a.mutation(api.projects.createGoal, { projectId, title: "g" });
+  await a.mutation(api.projects.createMessage, { projectId, sessionId: session, turnId: "t", idempotencyKey: "k", role: "learner", content: "x" });
+  await a.mutation(api.projects.recordProgress, { projectId, eventType: "done" });
+
+  await a.mutation(api.projects.requestProjectDeletion, { projectId });
+  // The client dies after one bounded batch: the soft-delete landed, the cleanup did not.
+  expect(await a.mutation(api.projects.deleteProjectBatch, { projectId, limit: 1 })).toMatchObject({ completed: false, deleted: 1 });
+  await expect(a.query(api.projects.listProjects, {})).resolves.toEqual([]);
+
+  // A retry re-enters through the soft-delete step, which must not fail NOT_FOUND,
+  // and idempotency never widens the owner boundary.
+  await expect(a.mutation(api.projects.requestProjectDeletion, { projectId })).resolves.toBe(null);
+  await expect(b.mutation(api.projects.requestProjectDeletion, { projectId })).rejects.toThrow("NOT_FOUND");
+  await expect(t.mutation(api.projects.requestProjectDeletion, { projectId })).rejects.toThrow("UNAUTHENTICATED");
+
+  let completed = false;
+  for (let attempt = 0; attempt < 10 && !completed; attempt += 1) completed = (await a.mutation(api.projects.deleteProjectBatch, { projectId, limit: 1 })).completed;
+  expect(completed).toBe(true);
+  const leftovers = await t.run(async (ctx) => ({ project: await ctx.db.get(projectId), goals: await ctx.db.query("learningGoals").collect(), sessions: await ctx.db.query("learningSessions").collect(), messages: await ctx.db.query("messages").collect(), events: await ctx.db.query("progressEvents").collect() }));
+  expect(leftovers).toEqual({ project: null, goals: [], sessions: [], messages: [], events: [] });
+
+  // Once the row is hard-deleted nothing can restart it; the client maps this
+  // NOT_FOUND to "already deleted" instead of an error.
+  await expect(a.mutation(api.projects.requestProjectDeletion, { projectId })).rejects.toThrow("NOT_FOUND");
+  await expect(a.mutation(api.projects.deleteProjectBatch, { projectId, limit: 1 })).rejects.toThrow("NOT_FOUND");
+});
