@@ -32,9 +32,11 @@ export const checkCompatibility = internalQuery({
 /**
  * A small resumable migration template. First call records progress; a retry
  * completes the same run without duplicating state. Real backfills use bounded
- * indexed batches in place of this cursor stage.
+ * indexed batches in place of this cursor stage. Schema v4 adds only optional
+ * `projects.goal`/`projects.mode` fields, so there is no backfill: v3 rows stay
+ * valid and are read as unset until the owner saves a selection.
  */
-export const bootstrapSchemaV3 = internalMutation({
+export const bootstrapSchemaV4 = internalMutation({
   args: {},
   returns: migrationResult,
   handler: async (ctx) => {

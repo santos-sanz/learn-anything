@@ -24,9 +24,16 @@ export default defineSchema({
     attempts: v.number(),
     updatedAt: v.number(),
   }).index("by_migration", ["migration"]),
+  /**
+   * S21 adds optional `goal` and `mode` for onboarding/goal-mode selection.
+   * Both are optional so v3 rows stay valid without a backfill; `mode` uses the
+   * two learner-facing tracks only (S19/S20 implement the tutor behaviour).
+   */
   projects: defineTable({
     ownerId: v.string(),
     name: v.string(),
+    goal: v.optional(v.string()),
+    mode: v.optional(v.union(v.literal("language-practice"), v.literal("concept-learning"))),
     createdAt: v.number(),
     deletedAt: v.union(v.null(), v.number()),
   }).index("by_owner", ["ownerId"]),

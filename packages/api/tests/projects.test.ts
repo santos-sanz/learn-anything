@@ -13,14 +13,14 @@ test("every public S05 function denies an anonymous caller", async () => {
   const session = await t.run(async (ctx) => ctx.db.insert("learningSessions", { ownerId: "a", projectId: project, sessionKey: "s", createdAt: 1, endedAt: null }));
   const storageId = await t.run(async (ctx) => ctx.storage.store(new Blob(["fixture"]))) as never;
   const fileId = await t.run(async (ctx) => ctx.db.insert("privateFiles", { ownerId: "a", projectId: project, storageId, contentType: "text/plain", createdAt: 1 }));
-  const calls = [t.mutation(api.projects.createProject, { name: "A" }), t.query(api.projects.listProjects, {}), t.mutation(api.projects.createGoal, { projectId: project, title: "g" }), t.mutation(api.projects.createSession, { projectId: project, sessionKey: "s" }), t.mutation(api.projects.createMessage, { projectId: project, sessionId: session, turnId: "t", idempotencyKey: "k", role: "learner", content: "x" }), t.mutation(api.projects.recordProgress, { projectId: project, eventType: "done" }), t.query(api.projects.listProjectRecords, { projectId: project }), t.mutation(api.projects.requestProjectDeletion, { projectId: project }), t.mutation(api.projects.deleteProjectBatch, { projectId: project, limit: 1 }), t.mutation(api.files.registerPrivateFile, { projectId: project, storageId, contentType: "text/plain" }), t.query(api.files.getPrivateFile, { projectId: project, fileId })];
+  const calls = [t.mutation(api.projects.createProject, { name: "A" }), t.query(api.projects.listProjects, {}), t.query(api.projects.getProject, { projectId: project }), t.mutation(api.projects.updateProject, { projectId: project, name: "stolen" }), t.mutation(api.projects.createGoal, { projectId: project, title: "g" }), t.mutation(api.projects.createSession, { projectId: project, sessionKey: "s" }), t.mutation(api.projects.createMessage, { projectId: project, sessionId: session, turnId: "t", idempotencyKey: "k", role: "learner", content: "x" }), t.mutation(api.projects.recordProgress, { projectId: project, eventType: "done" }), t.query(api.projects.listProjectRecords, { projectId: project }), t.mutation(api.projects.requestProjectDeletion, { projectId: project }), t.mutation(api.projects.deleteProjectBatch, { projectId: project, limit: 1 }), t.mutation(api.files.registerPrivateFile, { projectId: project, storageId, contentType: "text/plain" }), t.query(api.files.getPrivateFile, { projectId: project, fileId })];
   for (const call of calls) await expect(call).rejects.toThrow("UNAUTHENTICATED");
 });
 
 test("two-user matrix rejects foreign records and preserves server timestamps/dedupe", async () => {
   const t = convexTest({ schema, modules }); const a = t.withIdentity(identity("a")); const b = t.withIdentity(identity("b"));
   const projectA = await a.mutation(api.projects.createProject, { name: "A" }); const projectB = await b.mutation(api.projects.createProject, { name: "B" }); const sessionA = await a.mutation(api.projects.createSession, { projectId: projectA, sessionKey: "session" });
-  const foreign = [b.query(api.projects.listProjectRecords, { projectId: projectA }), b.mutation(api.projects.createGoal, { projectId: projectA, title: "steal" }), b.mutation(api.projects.createSession, { projectId: projectA, sessionKey: "steal" }), b.mutation(api.projects.createMessage, { projectId: projectB, sessionId: sessionA, turnId: "t", idempotencyKey: "k", role: "learner", content: "steal" }), b.mutation(api.projects.recordProgress, { projectId: projectA, eventType: "steal" }), b.mutation(api.projects.requestProjectDeletion, { projectId: projectA }), b.mutation(api.projects.deleteProjectBatch, { projectId: projectA, limit: 1 })];
+  const foreign = [b.query(api.projects.listProjectRecords, { projectId: projectA }), b.query(api.projects.getProject, { projectId: projectA }), b.mutation(api.projects.updateProject, { projectId: projectA, name: "stolen" }), b.mutation(api.projects.createGoal, { projectId: projectA, title: "steal" }), b.mutation(api.projects.createSession, { projectId: projectA, sessionKey: "steal" }), b.mutation(api.projects.createMessage, { projectId: projectB, sessionId: sessionA, turnId: "t", idempotencyKey: "k", role: "learner", content: "steal" }), b.mutation(api.projects.recordProgress, { projectId: projectA, eventType: "steal" }), b.mutation(api.projects.requestProjectDeletion, { projectId: projectA }), b.mutation(api.projects.deleteProjectBatch, { projectId: projectA, limit: 1 })];
   for (const call of foreign) await expect(call).rejects.toThrow("NOT_FOUND");
   const input = { projectId: projectA, sessionId: sessionA, turnId: "t", idempotencyKey: "retry", role: "learner" as const, content: "hello" }; const first = await a.mutation(api.projects.createMessage, input); expect(await a.mutation(api.projects.createMessage, input)).toBe(first);
   const messages = await t.run(async (ctx) => ctx.db.query("messages").collect()); expect(messages).toHaveLength(1); expect(messages[0].createdAt).toEqual(expect.any(Number));
@@ -34,4 +34,45 @@ test("private-file authorization denies anonymous and foreign access while allow
   await expect(a.query(api.files.getPrivateFile, { projectId: projectA, fileId: file })).resolves.toEqual({ storageId, contentType: "text/plain" });
   await expect(b.query(api.files.getPrivateFile, { projectId: projectB, fileId: file })).rejects.toThrow("NOT_FOUND");
   await expect(t.query(api.files.getPrivateFile, { projectId: projectA, fileId: file })).rejects.toThrow("UNAUTHENTICATED");
+});
+
+test("owner CRUD lifecycle: create with goal/mode, edit, clear goal, and two-phase delete", async () => {
+  const t = convexTest({ schema, modules }); const a = t.withIdentity(identity("a")); const b = t.withIdentity(identity("b"));
+  const projectId = await a.mutation(api.projects.createProject, { name: "  Spanish  ", goal: "  hold a five-minute chat  ", mode: "language-practice" });
+  await expect(a.query(api.projects.getProject, { projectId })).resolves.toMatchObject({ name: "Spanish", goal: "hold a five-minute chat", mode: "language-practice", createdAt: expect.any(Number) });
+
+  await a.mutation(api.projects.updateProject, { projectId, name: "Spanish verbs", mode: "concept-learning" });
+  await expect(a.query(api.projects.getProject, { projectId })).resolves.toMatchObject({ name: "Spanish verbs", mode: "concept-learning" });
+  await a.mutation(api.projects.updateProject, { projectId, goal: "" });
+  const cleared = await a.query(api.projects.getProject, { projectId });
+  expect(cleared.goal).toBeUndefined();
+  expect(cleared.mode).toBe("concept-learning");
+  await expect(a.query(api.projects.listProjects, {})).resolves.toHaveLength(1);
+  await expect(b.query(api.projects.listProjects, {})).resolves.toEqual([]);
+
+  const session = await a.mutation(api.projects.createSession, { projectId, sessionKey: "s" });
+  await a.mutation(api.projects.createGoal, { projectId, title: "g" });
+  await a.mutation(api.projects.createMessage, { projectId, sessionId: session, turnId: "t", idempotencyKey: "k", role: "learner", content: "x" });
+  await a.mutation(api.projects.recordProgress, { projectId, eventType: "done" });
+
+  await a.mutation(api.projects.requestProjectDeletion, { projectId });
+  await expect(a.query(api.projects.getProject, { projectId })).rejects.toThrow("NOT_FOUND");
+  await expect(a.query(api.projects.listProjects, {})).resolves.toEqual([]);
+  const firstBatch = await a.mutation(api.projects.deleteProjectBatch, { projectId, limit: 2 });
+  expect(firstBatch).toMatchObject({ completed: false, deleted: 2 });
+  const retry = await a.mutation(api.projects.deleteProjectBatch, { projectId, limit: 2 });
+  expect(retry).toMatchObject({ completed: true, deleted: 2 });
+  await expect(a.mutation(api.projects.deleteProjectBatch, { projectId, limit: 2 })).rejects.toThrow("NOT_FOUND");
+  const leftovers = await t.run(async (ctx) => ({ projects: await ctx.db.get(projectId), goals: await ctx.db.query("learningGoals").collect(), sessions: await ctx.db.query("learningSessions").collect(), messages: await ctx.db.query("messages").collect(), events: await ctx.db.query("progressEvents").collect() }));
+  expect(leftovers).toEqual({ projects: null, goals: [], sessions: [], messages: [], events: [] });
+});
+
+test("goal/mode selection accepts exactly the two S21 learner tracks", async () => {
+  const t = convexTest({ schema, modules }); const a = t.withIdentity(identity("a"));
+  const language = await a.mutation(api.projects.createProject, { name: "Language", mode: "language-practice" });
+  const concept = await a.mutation(api.projects.createProject, { name: "Concept", mode: "concept-learning" });
+  await expect(a.query(api.projects.getProject, { projectId: language })).resolves.toMatchObject({ mode: "language-practice" });
+  await expect(a.query(api.projects.getProject, { projectId: concept })).resolves.toMatchObject({ mode: "concept-learning" });
+  await expect(a.mutation(api.projects.createProject, { name: "Invalid", mode: "quiz" as never })).rejects.toThrow();
+  await expect(a.mutation(api.projects.updateProject, { projectId: language, mode: "tutor" as never })).rejects.toThrow();
 });
