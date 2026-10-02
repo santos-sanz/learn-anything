@@ -142,18 +142,20 @@ export function ProjectDetail({ id }: { id: string }) {
         </p>
       )}
 
-      <h2>Delete project</h2>
-      <p className="screen-intro">Deleting removes this project and everything inside it. This can’t be undone.</p>
-      <button
-        type="button"
-        className="button button-danger"
-        onClick={() => {
-          setDeleteError(null);
-          setDeleteOpen(true);
-        }}
-      >
-        Delete this project
-      </button>
+      <section className="danger-zone" aria-labelledby="delete-project-heading">
+        <h2 id="delete-project-heading">Delete project</h2>
+        <p className="screen-intro">Deleting removes this project and everything inside it. This can’t be undone.</p>
+        <button
+          type="button"
+          className="button button-danger"
+          onClick={() => {
+            setDeleteError(null);
+            setDeleteOpen(true);
+          }}
+        >
+          Delete this project
+        </button>
+      </section>
 
       <ConfirmDelete open={deleteOpen} projectName={project.name} busy={deleteBusy} error={deleteError} onCancel={cancelDelete} onConfirm={handleDelete} />
     </section>

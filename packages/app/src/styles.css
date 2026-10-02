@@ -3,7 +3,8 @@
 :root {
   color-scheme: light;
   --ink: #16202c;
-  --ink-soft: #44506180;
+  /* Opaque, >= 4.5:1 on both --surface and --surface-sunken (WCAG AA for normal text). */
+  --ink-soft: #5a6473;
   --surface: #ffffff;
   --surface-sunken: #f4f6fa;
   --line: #d4dae3;
@@ -263,6 +264,13 @@ a {
   flex-direction: column;
   gap: 0.35rem;
   margin-bottom: 1rem;
+}
+
+/* Destructive block: visually and structurally separated from the edit form. */
+.danger-zone {
+  margin-top: 1.5rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--line);
 }
 
 /* Forms */
