@@ -60,7 +60,7 @@ test("signed-in identity derives ownerId in ctx.auth functions and survives a se
   expect(secondSubject).not.toBe(firstSubject);
   expect(secondSubject.split("|")[0]).toBe(firstSubject.split("|")[0]);
   const secondSession = t.withIdentity(identity(secondSubject));
-  expect(await secondSession.query(api.projects.listProjects, {})).toEqual([{ _id: project, name: "Spanish" }]);
+  expect(await secondSession.query(api.projects.listProjects, {})).toEqual([{ _id: project, name: "Spanish", createdAt: stored?.createdAt }]);
 
   const stranger = t.withIdentity(identity("stranger-user|stranger-session"));
   expect(await stranger.query(api.projects.listProjects, {})).toEqual([]);
