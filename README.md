@@ -2,7 +2,7 @@
 
 A voice-first learning platform for any topic. Create a private learning project, set a goal, upload your own learning material, and practise with an AI tutor. Language practice and concept learning share the same project, document and conversation foundation.
 
-**Status:** planning backlog, not a running application. Repository visibility and license are publication decisions to confirm. Proposed release: v0.1.
+**Status:** planning backlog, not a running application. Public source code under MIT. Proposed release: v0.1.
 
 ## v0.1 outcome
 
@@ -13,22 +13,23 @@ Voice is a core feature, not an optional text chatbot. The first implementation 
 ## Proposed architecture
 
 - Web client: TypeScript, accessible responsive UI. Framework choice is resolved in the architecture issue before scaffold work.
-- Supabase: Postgres, Auth, private Storage and tenant-scoped vector retrieval. Versioned SQL migrations and RLS are required.
-- Cloudflare: web/API hosting and an optional Access gate for restricted deployments. Supabase Auth remains the identity and row-authorization authority. Access JWT validation is a separate perimeter control, not a replacement for Supabase sessions or RLS.
-- Backend API: validates Supabase sessions, scopes every operation to a user and project, and calls providers without exposing keys.
+- Convex: reactive document database, typed queries/mutations/actions, file storage and project-filtered vector search. Authorization is enforced in every public function, not database RLS. Versioned schema/functions and resumable data migrations replace SQL migrations.
+- Authentication: start with Convex-compatible auth without a paid auth SaaS requirement. Convex Auth is beta; OAuth GitHub/Google is the initial candidate after configuration review. Email OTP/reset requires an email provider. The auth/runtime ADR selects the method and validates agent-token bridging.
+- Cloudflare: agent runtime only, using Agents SDK on Workers and SQLite-backed Durable Objects within the Workers Free plan limits. No Cloudflare Access authentication gate and no general web hosting in this scope. Convex-compatible authentication remains the identity authority. Frontend hosting is a separate decision. Free limits are finite: quota exhaustion must fail safely, not trigger a paid upgrade.
+- Backend API: validates Convex-compatible authenticated identity, scopes every operation to a user and project, and calls providers without exposing keys.
 - Ingestion worker: parses documents, creates source-aware chunks, requests embeddings, and commits resumable job results. A worker runtime is chosen after validating file size and execution-time limits.
-- NaN Builders adapter: OpenAI-compatible LLM calls, Whisper transcription, Whisper audio translation to English, Kokoro speech, Qwen3 embeddings and reranking. Model IDs and supported languages are configuration, checked against current provider capabilities.
+- NaN Builders is the default provider for every documented AI stage: LLM tutor and text translation, Whisper STT and audio-to-English translation, Kokoro TTS, qwen3-embedding embeddings, and rerank. Reuse embeddings and rerank retrieved candidates to make full use of the membership within its published quotas. No silent fallback to another provider; unsupported capabilities require a visible decision. Model IDs, voices, languages and limits are checked during implementation.
 
 ```mermaid
 flowchart TD
-  U[Web client and microphone] --> C[Cloudflare edge]
-  C --> A[Backend API]
-  U --> S[Supabase Auth]
-  A --> V[Validate Supabase session and project ownership]
-  V --> D[(Supabase Postgres with RLS)]
-  V --> P[NaN provider adapter]
+  U[Web client and microphone] --> A[Backend API]
+  U --> S[Convex-compatible Auth]
+  A --> V[Validate authenticated identity and project ownership]
+  V --> D[(Convex database and authorized functions)]
+  V --> C[Cloudflare agent runtime on Free plan]
+  C --> P[NaN provider adapter]
   U --> O[Private document upload]
-  O --> B[(Supabase private Storage)]
+  O --> B[(Convex file storage with private HTTP access)]
   B --> J[Ingestion jobs and worker]
   J --> E[Embeddings]
   E --> D
@@ -43,9 +44,9 @@ Voice flow: **microphone -> STT -> scoped RAG -> LLM tutor -> TTS -> playback**.
 
 ## Project and data boundaries
 
-Proposed entities: projects, documents, ingestion_jobs, document_chunks, learning_sessions, messages, citations, learning_goals and progress_events. Every content row is scoped to its owner and project. Original documents, chunks, embeddings and messages remain private even when the source code is public. Storage policies follow the same owner/project boundary.
+Proposed entities: projects, documents, ingestion_jobs, document_chunks, learning_sessions, messages, citations, learning_goals and progress_events. Every content row is scoped to its owner and project. Original documents, chunks, embeddings and messages remain private even when the source code is public. All public Convex functions and HTTP file actions enforce the same owner/project boundary. File IDs do not grant access.
 
-Uploads are restricted by type and size, parsed safely, and never interpreted as system instructions. Documents can be deleted with their chunks and citations handled explicitly. Raw voice audio is ephemeral by default; retaining it requires opt-in and a retention policy. Do not promise pronunciation scoring from transcripts alone.
+Uploads are restricted by type and size, parsed safely, and never interpreted as system instructions. v0.1 uses authenticated HTTP upload/download actions and a <=10 MiB file cap below Convex's 20 MB HTTP limit. `storage.getUrl()` is a bearer link, not an authenticated expiring link; do not expose it for private documents or audio. Documents can be deleted with their chunks and citations handled explicitly. Raw voice audio is ephemeral by default; retaining it requires opt-in and a retention policy. Do not promise pronunciation scoring from transcripts alone.
 
 ## Provider credentials and deployment gate
 
@@ -53,17 +54,23 @@ NaN's terms say API keys are personal and non-transferable and must not be share
 
 No provider requests should be made during ordinary CI. Tests use synthetic fixtures and mocks. Live smoke tests are opt-in and use privately configured secrets.
 
-## Vector compatibility gate
+## Vector compatibility and Free-plan gates
 
-NaN documents `qwen3-embedding` as returning 4096-dimensional vectors. Supabase's HNSW documentation lists index limits of 2000 dimensions for `vector` and 4000 for `halfvec`. A naive 4096-dimensional HNSW index will not satisfy that contract. Start with a small-corpus exact-search proof of concept and choose an evaluated strategy before claiming scalable retrieval. Possible strategies include provider-supported reduced dimensions, binary-quantized candidate search followed by full-vector reranking, or a separately approved embedding model. Never silently truncate embeddings.
+NaN documents `qwen3-embedding` as 4096-dimensional. Convex's current vector-search guide and platform limits permit 2-4096 dimensions, but its generated `VectorIndexConfig` API reference still says 2-2048. S12 must verify index creation and a real query against the pinned SDK/deployment before declaring compatibility. Do not truncate vectors or change provider silently. Use owner/project filter fields before retrieval, recheck ownership of returned IDs, and apply NaN rerank to candidates.
+
+Convex vector search runs in actions, not queries, and uses fixed-length `v.array(v.float64())` vectors. Each search charges the whole index size in query-GB, regardless of tenant filters or number of results. Filters protect scope, not per-tenant billing isolation.
+
+Convex Free is distinct from metered Starter. Checked limits include database 0.5 GB, database I/O 1 GB/month, file storage 1 GB, data egress 1 GB/month, search storage 0.5 GB, search queries 3000 query-GB/month and 1 million function calls/month. Limits and actual plan must be rechecked at deployment. Free exhaustion can cause failures; never enable a paid upgrade automatically. Cloudflare agent Free quotas are separate.
+
+Cloudflare agent state is session/runtime state only; Convex owns durable projects, documents, messages and progress. The bridge must validate the selected auth provider's JWT/OIDC contract or a short-lived scoped server-issued connection token. Never assume a browser user ID or email authenticates an agent, or that Convex Auth tokens are accepted automatically by Cloudflare.
 
 ## Security
 
-**No secrets in this repo.** No API keys, service-role credentials, production URLs containing credentials, private documents, recordings, personal data or account exports. Commit only synthetic fixtures and empty/example configuration values.
+**No secrets in this repo.** No API keys, deployment-admin credentials, production URLs containing credentials, private documents, recordings, personal data or account exports. Commit only synthetic fixtures and empty/example configuration values.
 
-- Supabase publishable/anon keys are not the authorization boundary; enforce RLS.
-- Supabase service-role credentials and NaN keys stay server-side.
-- Validate both identity layers when Access is enabled; reject forged/expired tokens and direct-origin bypass.
+- Every public query, mutation, action and file HTTP action checks authenticated identity and project ownership.
+- Convex deployment-admin credentials and NaN keys stay server-side; no admin client in browser.
+- Validate Convex identity and project ownership at agent entry points and on reconnect; clients cannot pick another learner's agent instance or read another project's state.
 - Rate-limit costly routes, cap uploads and audio duration, redact logs and prevent cross-tenant caches.
 - Defer provider data processing and multiuser deployment until privacy/retention terms are reviewed.
 - Secret scanning, dependency checks and deterministic tests gate pull requests.
@@ -80,14 +87,20 @@ No implementation or cloud resources are provisioned by this planning package. v
 
 ## Verified documentation
 
-Checked 2026-10-02. Provider capabilities and terms must be rechecked when implementing.
+Checked 2026-10-02. Recheck versions, capabilities, quotas and terms during implementation.
 
 - NaN API examples: https://nan.builders/docs/examples
 - NaN model limits: https://nan.builders/docs/models
 - NaN terms: https://nan.builders/terms
-- Supabase Auth: https://supabase.com/docs/guides/auth/server-side
-- Supabase RLS: https://supabase.com/docs/guides/database/postgres/row-level-security
-- Supabase Storage security: https://supabase.com/docs/guides/storage/security/access-control
-- Supabase pgvector: https://supabase.com/docs/guides/database/extensions/pgvector
-- Supabase HNSW limits: https://supabase.com/docs/guides/ai/vector-indexes/hnsw-indexes
-- Cloudflare Access validation: https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/authorization-cookie/validating-json/
+- Convex authentication: https://docs.convex.dev/auth/overview
+- Convex Auth beta and methods: https://labs.convex.dev/auth
+- Convex auth setup choices: https://labs.convex.dev/auth/config
+- Convex file uploads: https://docs.convex.dev/file-storage/upload-files
+- Convex private file serving: https://docs.convex.dev/file-storage/serve-files
+- Convex vector search: https://docs.convex.dev/search/vector-search
+- Convex generated vector API reference (conflicting dimensional limit): https://docs.convex.dev/api/interfaces/server.VectorIndexConfig
+- Convex platform limits: https://docs.convex.dev/production/state/limits
+- Convex plans: https://www.convex.dev/pricing
+- Cloudflare Agents SDK: https://developers.cloudflare.com/agents/
+- Cloudflare Durable Objects Free plan: https://developers.cloudflare.com/durable-objects/platform/pricing/
+- Cloudflare Workers limits: https://developers.cloudflare.com/workers/platform/limits/
