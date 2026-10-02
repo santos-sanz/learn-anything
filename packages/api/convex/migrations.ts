@@ -33,8 +33,10 @@ export const checkCompatibility = internalQuery({
 const BACKFILL_BATCH = 100;
 
 /**
- * S09 resumable marker migration for schema/function version 5: the optional
- * lease/retry columns on `ingestionJobs` plus the `documentChunks` table.
+ * S09 resumable marker migration for schema/function version 6: the optional
+ * lease/retry columns on `ingestionJobs` plus the `documentChunks` table. It
+ * supersedes S21's no-backfill version 5 marker (the same replace-the-marker
+ * step S08 took for versions 2/3), and also adopts a v5 deployment in place.
  * Each call performs one bounded batch (indexed by `documentId`) that backfills
  * `nextAttemptAt` on S08-era rows so they enter `by_status_next`, then records
  * the cursor; a retry resumes after the last processed document and the final
@@ -42,7 +44,7 @@ const BACKFILL_BATCH = 100;
  * batch that replays changes nothing twice. `maxAttempts` stays optional and
  * is resolved at read time, so no backfill depends on deployment configuration.
  */
-export const bootstrapSchemaV5 = internalMutation({
+export const bootstrapSchemaV6 = internalMutation({
   args: {},
   returns: migrationResult,
   handler: async (ctx) => {

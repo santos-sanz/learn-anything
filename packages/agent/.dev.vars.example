@@ -1,0 +1,5 @@
+# Local Durable Object secrets for `pnpm --filter @learn-anything/agent dev`.
+# Copy to `.dev.vars` (gitignored) and fill in locally. Never commit real values;
+# production values are provisioned with `npx wrangler secret put <NAME>`.
+AGENT_BRIDGE_SECRET=
+NAN_API_KEY=
