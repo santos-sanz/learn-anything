@@ -30,13 +30,14 @@ export const checkCompatibility = internalQuery({
 });
 
 /**
- * A small resumable migration template. First call records progress; a retry
- * completes the same run without duplicating state. Real backfills use bounded
- * indexed batches in place of this cursor stage. Schema v4 adds only optional
- * `projects.goal`/`projects.mode` fields, so there is no backfill: v3 rows stay
- * valid and are read as unset until the owner saves a selection.
+ * S21 resumable marker migration for schema/function version 5: optional
+ * `projects.goal`/`projects.mode` for onboarding, following S08's version 4
+ * (documents/ingestionJobs). It has no backfill because existing rows stay
+ * valid and are read as unset until the owner saves a selection. The first
+ * call records progress and a retry completes without duplicating state; real
+ * backfills use bounded indexed batches in place of this stage.
  */
-export const bootstrapSchemaV4 = internalMutation({
+export const bootstrapSchemaV5 = internalMutation({
   args: {},
   returns: migrationResult,
   handler: async (ctx) => {

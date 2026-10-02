@@ -138,18 +138,37 @@ export const requestProjectDeletion = mutation({ args: { projectId: v.id("projec
   const ownerId = await requireUserId(ctx); await requireOwnedProject(ctx, ownerId, args.projectId); await ctx.db.patch(args.projectId, { deletedAt: timestamp() }); return null;
 } });
 
+/** An already missing blob must never block the bounded, retry-safe delete loop. */
+async function deleteStoredBlob(ctx: MutationCtx, storageId: Id<"_storage">): Promise<void> {
+  try {
+    await ctx.storage.delete(storageId);
+  } catch {
+    // The referencing row is removed either way; a retry finds it gone.
+  }
+}
+
 /** Bounded, retry-safe deletion; it never accepts an owner identifier from a client. */
 export const deleteProjectBatch = mutation({ args: { projectId: v.id("projects"), limit: v.number() }, returns: v.object({ completed: v.boolean(), deleted: v.number() }), handler: async (ctx, args) => {
   const ownerId = await requireUserId(ctx); const project = await ctx.db.get(args.projectId);
   if (project === null || project.ownerId !== ownerId || project.deletedAt === null) throw new ConvexError({ code: "NOT_FOUND" });
   if (!Number.isInteger(args.limit) || args.limit < 1 || args.limit > 100) throw new ConvexError({ code: "INVALID_ARGUMENT" });
   let deleted = 0;
-  for (const table of ["messages", "learningSessions", "learningGoals", "progressEvents"] as const) {
+  // S08: a document takes its storage blob and its privateFiles row with it.
+  const documents = await ctx.db.query("documents").withIndex("by_owner_project", (q) => q.eq("ownerId", ownerId).eq("projectId", args.projectId)).take(args.limit - deleted);
+  for (const document of documents) {
+    await deleteStoredBlob(ctx, document.storageId);
+    const file = await ctx.db.get(document.privateFileId);
+    if (file !== null && file.ownerId === ownerId && file.projectId === args.projectId) await ctx.db.delete(document.privateFileId);
+    await ctx.db.delete(document._id); deleted += 1;
+  }
+  const files = await ctx.db.query("privateFiles").withIndex("by_owner_project", (q) => q.eq("ownerId", ownerId).eq("projectId", args.projectId)).take(args.limit - deleted);
+  for (const file of files) { await deleteStoredBlob(ctx, file.storageId); await ctx.db.delete(file._id); deleted += 1; }
+  for (const table of ["ingestionJobs", "messages", "learningSessions", "learningGoals", "progressEvents"] as const) {
+    if (deleted >= args.limit) break;
     const records = await ctx.db.query(table).withIndex("by_owner_project", (q) => q.eq("ownerId", ownerId).eq("projectId", args.projectId)).take(args.limit - deleted);
     for (const record of records) { await ctx.db.delete(record._id); deleted += 1; }
-    if (deleted === args.limit) break;
   }
-  const remaining = await Promise.all((["messages", "learningSessions", "learningGoals", "progressEvents"] as const).map((table) => ctx.db.query(table).withIndex("by_owner_project", (q) => q.eq("ownerId", ownerId).eq("projectId", args.projectId)).take(1)));
+  const remaining = await Promise.all((["documents", "privateFiles", "ingestionJobs", "messages", "learningSessions", "learningGoals", "progressEvents"] as const).map((table) => ctx.db.query(table).withIndex("by_owner_project", (q) => q.eq("ownerId", ownerId).eq("projectId", args.projectId)).take(1)));
   if (remaining.some((records) => records.length > 0)) return { completed: false, deleted };
   await ctx.db.delete(args.projectId); return { completed: true, deleted };
 } });

@@ -1,0 +1,2 @@
+Synthetic plain text fixture for the S08 upload tests.
+Second line with ordinary ASCII characters only.

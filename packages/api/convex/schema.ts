@@ -101,4 +101,44 @@ export default defineSchema({
     .index("by_owner", ["ownerId"])
     .index("by_owner_project", ["ownerId", "projectId"])
     .index("by_token_hash", ["tokenHash"]),
+  /**
+   * S08 document metadata. The `_storage` id is written only after project
+   * ownership and content checks passed in the upload HTTP action, and the
+   * paired `privateFiles` row is what `/private-files/:fileId` serves. Queries
+   * return status metadata only: never bytes and never a bearer storage URL.
+   */
+  documents: defineTable({
+    ownerId: v.string(),
+    projectId: v.id("projects"),
+    privateFileId: v.id("privateFiles"),
+    storageId: v.id("_storage"),
+    filename: v.string(),
+    extension: v.string(),
+    contentType: v.string(),
+    sizeBytes: v.number(),
+    status: v.union(v.literal("pending"), v.literal("ready"), v.literal("failed")),
+    failureCode: v.union(v.null(), v.string()),
+    idempotencyKey: v.string(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_owner_project", ["ownerId", "projectId"])
+    .index("by_owner_project_idempotency", ["ownerId", "projectId", "idempotencyKey"])
+    .index("by_storage_id", ["storageId"]),
+  /**
+   * S08 queues exactly one job per uploaded document; S09 owns leases, retries
+   * and execution states. `by_document` is the idempotency guard, so a retried
+   * upload never creates a second job for the same document.
+   */
+  ingestionJobs: defineTable({
+    ownerId: v.string(),
+    projectId: v.id("projects"),
+    documentId: v.id("documents"),
+    status: v.union(v.literal("queued"), v.literal("running"), v.literal("succeeded"), v.literal("failed")),
+    attempts: v.number(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_owner_project", ["ownerId", "projectId"])
+    .index("by_document", ["documentId"]),
 });

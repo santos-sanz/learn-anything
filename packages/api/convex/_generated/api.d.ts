@@ -10,6 +10,7 @@
 
 import type * as agentSessions from "../agentSessions.js";
 import type * as auth from "../auth.js";
+import type * as documents from "../documents.js";
 import type * as files from "../files.js";
 import type * as http from "../http.js";
 import type * as migrations from "../migrations.js";
@@ -26,6 +27,7 @@ import type {
 declare const fullApi: ApiFromModules<{
   agentSessions: typeof agentSessions;
   auth: typeof auth;
+  documents: typeof documents;
   files: typeof files;
   http: typeof http;
   migrations: typeof migrations;
