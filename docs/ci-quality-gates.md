@@ -2,8 +2,8 @@
 
 The GitHub Actions **Quality gates** workflow runs on every pull request and
 push to `main`. It uses Node.js 22.14.0, which satisfies the workspace's
-`engines.node` requirement (`>=22`), enables Corepack, and installs the locked
-dependency graph with `pnpm install --frozen-lockfile`.
+`engines.node` requirement (`>=22`), sets up pnpm 10.20.0, and installs the
+locked dependency graph with `pnpm install --frozen-lockfile`.
 
 ## What runs
 
