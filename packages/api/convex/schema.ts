@@ -1,12 +1,15 @@
+import { authTables } from "@convex-dev/auth/server";
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
 
 /**
  * S04 durable learning records. `projects` is the root of a project's scope;
  * every child record repeats both ownerId and projectId so its access path can
- * be tenant-scoped without a scan.
+ * be tenant-scoped without a scan. S06 adds Convex Auth's `authTables` and the
+ * scoped agent connection tokens verified on the agent handshake.
  */
 export default defineSchema({
+  ...authTables,
   schemaMetadata: defineTable({
     key: v.literal("primary"),
     schemaVersion: v.number(),
@@ -72,4 +75,23 @@ export default defineSchema({
   })
     .index("by_owner_project", ["ownerId", "projectId"])
     .index("by_storage_id", ["storageId"]),
+  /**
+   * S06 agent connection tokens: a hash of a short-lived secret bound to one
+   * owner and project. The plaintext exists only in the issue/rotate response.
+   */
+  agentConnectionTokens: defineTable({
+    ownerId: v.string(),
+    projectId: v.id("projects"),
+    tokenHash: v.string(),
+    issuedAt: v.number(),
+    expiresAt: v.number(),
+    revokedAt: v.union(v.null(), v.number()),
+    lastVerifiedAt: v.union(v.null(), v.number()),
+    verifyCount: v.number(),
+    authSessionId: v.optional(v.string()),
+    replacedBy: v.optional(v.id("agentConnectionTokens")),
+  })
+    .index("by_owner", ["ownerId"])
+    .index("by_owner_project", ["ownerId", "projectId"])
+    .index("by_token_hash", ["tokenHash"]),
 });

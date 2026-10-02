@@ -34,7 +34,7 @@ export const checkCompatibility = internalQuery({
  * completes the same run without duplicating state. Real backfills use bounded
  * indexed batches in place of this cursor stage.
  */
-export const bootstrapSchemaV2 = internalMutation({
+export const bootstrapSchemaV3 = internalMutation({
   args: {},
   returns: migrationResult,
   handler: async (ctx) => {

@@ -1,16 +1,24 @@
+import { getAuthUserId } from "@convex-dev/auth/server";
 import { ConvexError, v } from "convex/values";
 
 import type { Id } from "./_generated/dataModel";
-import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
+import { mutation, query, type ActionCtx, type MutationCtx, type QueryCtx } from "./_generated/server";
 
 type ReadContext = MutationCtx | QueryCtx;
+/** Any context that carries Convex Auth identity: queries, mutations and HTTP actions. */
+type AuthContext = Pick<ActionCtx, "auth">;
 const timestamp = () => Date.now();
 
-/** Authentication failures are typed so callers never infer ownership. */
-export async function requireUserId(ctx: ReadContext): Promise<string> {
-  const identity = await ctx.auth.getUserIdentity();
-  if (identity === null) throw new ConvexError({ code: "UNAUTHENTICATED" });
-  return identity.subject;
+/**
+ * Authentication failures are typed so callers never infer ownership. Identity
+ * comes from `ctx.auth`: Convex Auth subjects are `userId|sessionId`, and the
+ * session is stripped so a stable user id (never an email address or a
+ * client-supplied value) becomes `ownerId`.
+ */
+export async function requireUserId(ctx: AuthContext): Promise<string> {
+  const userId = await getAuthUserId(ctx);
+  if (userId === null) throw new ConvexError({ code: "UNAUTHENTICATED" });
+  return userId;
 }
 
 export async function requireOwnedProject(ctx: ReadContext, ownerId: string, projectId: Id<"projects">) {

@@ -3,6 +3,13 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
+  "exports": {
+    "./convex/_generated/api": {
+      "types": "./convex/_generated/api.d.ts",
+      "default": "./convex/_generated/api.js"
+    },
+    "./package.json": "./package.json"
+  },
   "scripts": {
     "convex:codegen": "convex codegen",
     "convex:dev": "convex dev",
@@ -10,6 +17,8 @@
     "build": "tsc --noEmit"
   },
   "dependencies": {
+    "@auth/core": "0.41.3",
+    "@convex-dev/auth": "0.0.96",
     "@learn-anything/shared": "workspace:*",
     "convex": "1.43.0"
   },

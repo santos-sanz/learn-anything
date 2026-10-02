@@ -8,10 +8,13 @@
  * @module
  */
 
+import type * as agentSessions from "../agentSessions.js";
+import type * as auth from "../auth.js";
 import type * as files from "../files.js";
 import type * as http from "../http.js";
 import type * as migrations from "../migrations.js";
 import type * as projects from "../projects.js";
+import type * as redirects from "../redirects.js";
 import type * as version from "../version.js";
 
 import type {
@@ -21,10 +24,13 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  agentSessions: typeof agentSessions;
+  auth: typeof auth;
   files: typeof files;
   http: typeof http;
   migrations: typeof migrations;
   projects: typeof projects;
+  redirects: typeof redirects;
   version: typeof version;
 }>;
 

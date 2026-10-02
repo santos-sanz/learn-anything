@@ -8,7 +8,10 @@
     "build": "vite build"
   },
   "dependencies": {
+    "@convex-dev/auth": "0.0.96",
+    "@learn-anything/api": "workspace:*",
     "@learn-anything/shared": "workspace:*",
+    "convex": "1.43.0",
     "react": "19.1.1",
     "react-dom": "19.1.1",
     "vite": "8.3.2"
