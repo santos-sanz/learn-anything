@@ -122,15 +122,62 @@ export default defineSchema({
    * S08 queues exactly one job per uploaded document; S09 owns leases, retries
    * and execution states. `by_document` is the idempotency guard, so a retried
    * upload never creates a second job for the same document.
+   *
+   * S09 adds lease/retry fields as optional, additive columns so an S08-era row
+   * still validates: `nextAttemptAt`/`maxAttempts` are backfilled by the
+   * resumable v5 migration (rows missing `nextAttemptAt` are also claimable
+   * through `by_status` until it runs), and an absent lease means idle.
+   * `failed` is the dead letter; `unsupported` is the terminal state for
+   * encrypted/scanned/unsupported inputs and is never retried.
    */
   ingestionJobs: defineTable({
     ownerId: v.string(),
     projectId: v.id("projects"),
     documentId: v.id("documents"),
-    status: v.union(v.literal("queued"), v.literal("running"), v.literal("succeeded"), v.literal("failed")),
+    status: v.union(
+      v.literal("queued"),
+      v.literal("running"),
+      v.literal("succeeded"),
+      v.literal("failed"),
+      v.literal("unsupported"),
+    ),
     attempts: v.number(),
     createdAt: v.number(),
     updatedAt: v.number(),
+    maxAttempts: v.optional(v.number()),
+    leaseOwner: v.optional(v.string()),
+    leaseExpiresAt: v.optional(v.number()),
+    nextAttemptAt: v.optional(v.number()),
+    failureCode: v.optional(v.string()),
+    contentVersionKey: v.optional(v.string()),
+    chunkCount: v.optional(v.number()),
+  })
+    .index("by_owner_project", ["ownerId", "projectId"])
+    .index("by_document", ["documentId"])
+    .index("by_status", ["status"])
+    .index("by_status_next", ["status", "nextAttemptAt"]),
+  /**
+   * S09 chunk rows produced by the pluggable process step. The commit is an
+   * upsert keyed by (`documentId`, `chunkKey`) where `chunkKey` derives from
+   * `contentVersionKey` = `sha256(content):v<contract>`, so replayed jobs keep
+   * the same rows instead of appending duplicates. Source-aware chunking
+   * policy itself is S10.
+   */
+  documentChunks: defineTable({
+    ownerId: v.string(),
+    projectId: v.id("projects"),
+    documentId: v.id("documents"),
+    contentVersionKey: v.string(),
+    seq: v.number(),
+    chunkKey: v.string(),
+    text: v.string(),
+    contentHash: v.string(),
+    locator: v.object({
+      blockIndex: v.number(),
+      page: v.union(v.null(), v.number()),
+      heading: v.union(v.null(), v.string()),
+    }),
+    createdAt: v.number(),
   })
     .index("by_owner_project", ["ownerId", "projectId"])
     .index("by_document", ["documentId"]),

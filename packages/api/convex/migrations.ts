@@ -1,5 +1,6 @@
 import { ConvexError, v } from "convex/values";
 
+import type { Id } from "./_generated/dataModel";
 import { internalMutation, internalQuery } from "./_generated/server";
 import { BOOTSTRAP_MIGRATION, FUNCTION_VERSION, SCHEMA_VERSION } from "./version";
 
@@ -29,13 +30,19 @@ export const checkCompatibility = internalQuery({
   },
 });
 
+const BACKFILL_BATCH = 100;
+
 /**
- * S08 resumable marker migration for schema/function version 4 (documents and
- * ingestionJobs tables). It has no backfill because the new tables start empty;
- * the first call records progress and a retry completes without duplicating
- * state. Real backfills use bounded indexed batches in place of this stage.
+ * S09 resumable marker migration for schema/function version 5: the optional
+ * lease/retry columns on `ingestionJobs` plus the `documentChunks` table.
+ * Each call performs one bounded batch (indexed by `documentId`) that backfills
+ * `nextAttemptAt` on S08-era rows so they enter `by_status_next`, then records
+ * the cursor; a retry resumes after the last processed document and the final
+ * call writes the version marker. Patches are idempotent, so an interrupted
+ * batch that replays changes nothing twice. `maxAttempts` stays optional and
+ * is resolved at read time, so no backfill depends on deployment configuration.
  */
-export const bootstrapSchemaV4 = internalMutation({
+export const bootstrapSchemaV5 = internalMutation({
   args: {},
   returns: migrationResult,
   handler: async (ctx) => {
@@ -43,11 +50,24 @@ export const bootstrapSchemaV4 = internalMutation({
     const now = Date.now();
     if (existing?.status === "completed") return { completed: true, cursor: null, schemaVersion: SCHEMA_VERSION };
     if (existing === null) {
-      await ctx.db.insert("migrationRuns", { migration: BOOTSTRAP_MIGRATION, targetSchemaVersion: SCHEMA_VERSION, status: "running", cursor: "write-schema-metadata", attempts: 1, updatedAt: now });
-      return { completed: false, cursor: "write-schema-metadata", schemaVersion: SCHEMA_VERSION };
+      await ctx.db.insert("migrationRuns", { migration: BOOTSTRAP_MIGRATION, targetSchemaVersion: SCHEMA_VERSION, status: "running", cursor: "", attempts: 1, updatedAt: now });
+      return { completed: false, cursor: "", schemaVersion: SCHEMA_VERSION };
     }
-    if (existing.targetSchemaVersion !== SCHEMA_VERSION || existing.cursor !== "write-schema-metadata") {
+    if (existing.targetSchemaVersion !== SCHEMA_VERSION) {
       throw new ConvexError("Unsupported migration state; stop and investigate.");
+    }
+    const cursor = existing.cursor ?? "";
+    const batch = await ctx.db
+      .query("ingestionJobs")
+      .withIndex("by_document", (q) => q.gt("documentId", cursor as Id<"documents">))
+      .take(BACKFILL_BATCH);
+    if (batch.length > 0) {
+      for (const job of batch) {
+        if (job.nextAttemptAt === undefined) await ctx.db.patch(job._id, { nextAttemptAt: job.createdAt });
+      }
+      const nextCursor = batch[batch.length - 1].documentId;
+      await ctx.db.patch(existing._id, { cursor: nextCursor, attempts: existing.attempts + 1, updatedAt: Date.now() });
+      return { completed: false, cursor: nextCursor, schemaVersion: SCHEMA_VERSION };
     }
     const metadata = await ctx.db.query("schemaMetadata").withIndex("by_key", (q) => q.eq("key", "primary")).unique();
     if (metadata !== null && metadata.schemaVersion > SCHEMA_VERSION) throw new ConvexError("Deployment schema is newer than this migration.");
@@ -56,7 +76,7 @@ export const bootstrapSchemaV4 = internalMutation({
     } else {
       await ctx.db.patch(metadata._id, { schemaVersion: SCHEMA_VERSION, functionVersion: FUNCTION_VERSION, updatedAt: now });
     }
-    await ctx.db.patch(existing._id, { status: "completed", cursor: null, attempts: existing.attempts + 1, updatedAt: now });
+    await ctx.db.patch(existing._id, { status: "completed", cursor: null, attempts: existing.attempts + 1, updatedAt: Date.now() });
     return { completed: true, cursor: null, schemaVersion: SCHEMA_VERSION };
   },
 });
