@@ -124,7 +124,7 @@ export async function storeWithRollback<T>(storage: BlobStorage, blob: Blob, com
   try {
     storageId = await storage.store(blob);
   } catch (error) {
-    throw new ConvexError({ code: storageFailureCode(error) });
+    throw new ConvexError({ code: storageFailureCode(error), cause: error instanceof Error ? (error.stack ?? error.message) : String(error) });
   }
   let outcome: { keep: boolean; result: T };
   try {

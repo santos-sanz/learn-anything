@@ -13,7 +13,7 @@ import { createHash } from "node:crypto";
  */
 export function ensureSubtleCrypto(): void {
   const target = globalThis.crypto as { subtle?: unknown } | undefined;
-  if (target === undefined || target.subtle !== undefined) return;
+  if (target === undefined) return;
   const digest = async (_algorithm: AlgorithmIdentifier, data: BufferSource): Promise<ArrayBuffer> => {
     const bytes =
       data instanceof ArrayBuffer
@@ -22,6 +22,9 @@ export function ensureSubtleCrypto(): void {
     const hash = createHash("sha256").update(bytes).digest();
     return new Uint8Array(hash).buffer;
   };
+  // Installed unconditionally: whether the exposed `subtle` is jsdom's
+  // missing one or Node's (which can reject jsdom-realm buffers on some
+  // runners), the syscall only ever asks for SHA-256.
   try {
     Object.defineProperty(target, "subtle", { value: { digest }, configurable: true });
   } catch {
