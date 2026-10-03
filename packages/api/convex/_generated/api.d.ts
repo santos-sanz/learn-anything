@@ -11,9 +11,11 @@
 import type * as agentSessions from "../agentSessions.js";
 import type * as auth from "../auth.js";
 import type * as cors from "../cors.js";
+import type * as crons from "../crons.js";
 import type * as documents from "../documents.js";
 import type * as files from "../files.js";
 import type * as http from "../http.js";
+import type * as ingestion from "../ingestion.js";
 import type * as migrations from "../migrations.js";
 import type * as projects from "../projects.js";
 import type * as redirects from "../redirects.js";
@@ -30,9 +32,11 @@ declare const fullApi: ApiFromModules<{
   agentSessions: typeof agentSessions;
   auth: typeof auth;
   cors: typeof cors;
+  crons: typeof crons;
   documents: typeof documents;
   files: typeof files;
   http: typeof http;
+  ingestion: typeof ingestion;
   migrations: typeof migrations;
   projects: typeof projects;
   redirects: typeof redirects;

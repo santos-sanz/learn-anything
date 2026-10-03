@@ -167,6 +167,7 @@ export const deleteProjectBatch = mutation({ args: { projectId: v.id("projects")
   if (!Number.isInteger(args.limit) || args.limit < 1 || args.limit > 100) throw new ConvexError({ code: "INVALID_ARGUMENT" });
   let deleted = 0;
   // S08: a document takes its storage blob and its privateFiles row with it.
+  // S09: chunks follow the document they belong to inside the same budget.
   const documents = await ctx.db.query("documents").withIndex("by_owner_project", (q) => q.eq("ownerId", ownerId).eq("projectId", args.projectId)).take(args.limit - deleted);
   for (const document of documents) {
     await deleteStoredBlob(ctx, document.storageId);
@@ -176,12 +177,12 @@ export const deleteProjectBatch = mutation({ args: { projectId: v.id("projects")
   }
   const files = await ctx.db.query("privateFiles").withIndex("by_owner_project", (q) => q.eq("ownerId", ownerId).eq("projectId", args.projectId)).take(args.limit - deleted);
   for (const file of files) { await deleteStoredBlob(ctx, file.storageId); await ctx.db.delete(file._id); deleted += 1; }
-  for (const table of ["ingestionJobs", "messages", "learningSessions", "learningGoals", "progressEvents"] as const) {
+  for (const table of ["documentChunks", "ingestionJobs", "messages", "learningSessions", "learningGoals", "progressEvents"] as const) {
     if (deleted >= args.limit) break;
     const records = await ctx.db.query(table).withIndex("by_owner_project", (q) => q.eq("ownerId", ownerId).eq("projectId", args.projectId)).take(args.limit - deleted);
     for (const record of records) { await ctx.db.delete(record._id); deleted += 1; }
   }
-  const remaining = await Promise.all((["documents", "privateFiles", "ingestionJobs", "messages", "learningSessions", "learningGoals", "progressEvents"] as const).map((table) => ctx.db.query(table).withIndex("by_owner_project", (q) => q.eq("ownerId", ownerId).eq("projectId", args.projectId)).take(1)));
+  const remaining = await Promise.all((["documents", "privateFiles", "documentChunks", "ingestionJobs", "messages", "learningSessions", "learningGoals", "progressEvents"] as const).map((table) => ctx.db.query(table).withIndex("by_owner_project", (q) => q.eq("ownerId", ownerId).eq("projectId", args.projectId)).take(1)));
   if (remaining.some((records) => records.length > 0)) return { completed: false, deleted };
   await ctx.db.delete(args.projectId); return { completed: true, deleted };
 } });

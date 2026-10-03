@@ -1,0 +1,14 @@
+%PDF-1.4
+1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj
+2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj
+3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /XObject << /Im0 5 0 R >> >> /Contents 4 0 R >> endobj
+4 0 obj << /Length 35 >> stream
+q 612 0 0 792 0 0 cm /Im0 Do Q
+endstream endobj
+5 0 obj << /Type /XObject /Subtype /Image /Width 4 /Height 4 /ColorSpace /DeviceGray /BitsPerComponent 8 /Length 16 >> stream
+................
+endstream endobj
+trailer << /Root 1 0 R >>
+startxref
+0
+%%EOF
