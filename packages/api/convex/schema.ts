@@ -29,7 +29,7 @@ export default defineSchema({
    * Both are optional so v3 rows stay valid without a backfill; `mode` uses the
    * two learner-facing tracks only (S19/S20 implement the tutor behaviour).
    *
-   * S20 (v9) adds optional `objective` and `difficulty` for the concept-learning
+   * S20 (v10) adds optional `objective` and `difficulty` for the concept-learning
    * selection: existing rows read as unset, and only `concept.selectObjectiveAndDifficulty`
    * writes them, so the selection surface stays separate from S19's mode code.
    */
@@ -75,7 +75,7 @@ export default defineSchema({
   /**
    * S04 progress events. `eventType` stays an open string so the original
    * `projects.recordProgress` contract is unchanged; every S20 field below is
-   * optional and additive (v9), so an S04-era row still validates and reads as
+   * optional and additive (v10), so an S04-era row still validates and reads as
    * unset.
    *
    * S20 writes three typed event types: `activity-completed` (an explain /
@@ -217,6 +217,13 @@ export default defineSchema({
    * ownership and content checks passed in the upload HTTP action, and the
    * paired `privateFiles` row is what `/private-files/:fileId` serves. Queries
    * return status metadata only: never bytes and never a bearer storage URL.
+   *
+   * S22 adds `deletedAt` (optional, absent on every live row) as the document
+   * deletion tombstone: the bounded cleanup purges bytes, chunks, embeddings
+   * and the job, then keeps this empty metadata row so an already-issued
+   * citation resolves to the explicit `document-deleted` unavailable state
+   * instead of an indistinguishable NOT_FOUND. Tombstones hold no content, are
+   * hidden from every list/read query, and are swept with the project.
    */
   documents: defineTable({
     ownerId: v.string(),
@@ -232,6 +239,7 @@ export default defineSchema({
     idempotencyKey: v.string(),
     createdAt: v.number(),
     updatedAt: v.number(),
+    deletedAt: v.optional(v.number()),
   })
     .index("by_owner_project", ["ownerId", "projectId"])
     .index("by_owner_project_idempotency", ["ownerId", "projectId", "idempotencyKey"])
@@ -282,6 +290,9 @@ export default defineSchema({
    * fills them with size/overlap windows whose locator names the page (PDF)
    * or nearest heading path (Markdown/text); embedding/vector fields are
    * deliberately absent here because S12 owns the index.
+   *
+   * S22 adds `by_document_seq` so the citation source viewer can load a cited
+   * chunk's bounded neighbours by sequence without scanning the document.
    */
   documentChunks: defineTable({
     ownerId: v.string(),
@@ -300,7 +311,8 @@ export default defineSchema({
     createdAt: v.number(),
   })
     .index("by_owner_project", ["ownerId", "projectId"])
-    .index("by_document", ["documentId"]),
+    .index("by_document", ["documentId"])
+    .index("by_document_seq", ["documentId", "seq"]),
   /**
    * S12 one embedding row per current-version chunk, kept out of
    * `documentChunks` so ordinary chunk reads never load a 4096-float vector.

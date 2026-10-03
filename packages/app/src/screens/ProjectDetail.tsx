@@ -4,7 +4,7 @@ import { ConfirmDelete } from "../components/ConfirmDelete.js";
 import { ProjectForm } from "../components/ProjectForm.js";
 import { useProjects } from "../data/ProjectsProvider.js";
 import type { ProjectSummary } from "../data/projects.js";
-import { navigate } from "../router.js";
+import { navigate, serializeRoute } from "../router.js";
 import { TurnCapture } from "../TurnCapture.js";
 import { dataErrorCode, mapDataError, modeLabel, toFormValues, toPatch, type ProjectFormValues } from "../view.js";
 
@@ -134,6 +134,14 @@ export function ProjectDetail({ id }: { id: string }) {
         {label !== null && <p className="badge">{label}</p>}
         {project.goal !== undefined && <p className="card-goal">{project.goal}</p>}
       </div>
+
+      <section className="project-documents" aria-labelledby="project-documents-heading">
+        <h2 id="project-documents-heading">Documents</h2>
+        <p className="screen-intro">Add learning material for this project, follow processing, retry failures and delete what you no longer need.</p>
+        <a className="button button-primary" href={serializeRoute({ name: "documents", projectId: id })}>
+          Manage documents
+        </a>
+      </section>
 
       <h2>Edit project</h2>
       <ProjectForm initialValues={toFormValues(project)} submitLabel="Save changes" busy={saveBusy} error={saveError} requireMode={false} onSubmit={(values) => void handleSave(values)} />
