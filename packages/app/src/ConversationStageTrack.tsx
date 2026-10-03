@@ -21,6 +21,12 @@ const STEP_STATE_LABELS = {
   waiting: "waiting",
 } as const;
 
+/** `ready` is the resting step: "in progress" would read as work running. */
+function stepLabel(stage: string, step: keyof typeof STEP_STATE_LABELS): string {
+  if (step === "current" && stage === "ready") return "reached";
+  return STEP_STATE_LABELS[step];
+}
+
 export type ConversationStageTrackProps = {
   state: ConversationState;
   onAction: (action: string) => void;
@@ -50,7 +56,7 @@ export function ConversationStageTrack({ state, onAction }: ConversationStageTra
             aria-current={step.state === "current" ? "step" : undefined}
           >
             <span className="stage-name">{STAGE_LABELS[step.stage]}</span>
-            <span className="stage-result">{STEP_STATE_LABELS[step.state]}</span>
+            <span className="stage-result">{stepLabel(step.stage, step.state)}</span>
           </li>
         ))}
       </ol>

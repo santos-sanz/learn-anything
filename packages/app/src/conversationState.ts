@@ -258,11 +258,15 @@ export function reduceConversation(state: ConversationState, event: Conversation
     }
     case "HISTORY_LOADING":
       return state.history.status === "loading" ? state : { ...state, history: { status: "loading" } };
-    case "HISTORY_READY":
+    case "HISTORY_READY": {
+      if (state.history.status === "ready" && state.history.messages === event.messages && state.history.droppedCitations === event.droppedCitations) {
+        return state;
+      }
       return {
         ...state,
         history: { status: "ready", messages: event.messages, droppedCitations: event.droppedCitations },
       };
+    }
     case "HISTORY_ERROR":
       return state.history.status === "error" ? state : { ...state, history: { status: "error" } };
     case "EDIT_TRANSCRIPT":
@@ -351,6 +355,7 @@ export function reduceConversation(state: ConversationState, event: Conversation
         notice: null,
         turnId: event.turnId,
         response: { turnId: event.turnId, text: event.text },
+        restorePolling: false,
       };
     }
     case "GENERATION_FAILED": {
@@ -431,8 +436,10 @@ export function reduceConversation(state: ConversationState, event: Conversation
         restorePolling: event.polling,
       };
     case "RESTORED_RESPONSE": {
+      // Only a result for the *adopted* restore turn may settle here, and a
+      // live capture cycle (its own turn id) is never interrupted by it.
       if (turnMismatch(state, event.turnId)) return state;
-      if (state.stage === "generating" || state.stage === "listening" || state.stage === "transcribing") return state;
+      if (state.stage === "listening" || state.stage === "transcribing") return state;
       return {
         ...state,
         stage: "ready",
@@ -465,11 +472,22 @@ export function conversationStageStates(state: ConversationState): Array<{ stage
   const activeStage: ConversationStage = state.stage === "error" ? (state.failedStage ?? "listening") : state.stage;
   const activeIndex = CONVERSATION_STAGES.indexOf(activeStage);
   const failed = state.stage === "error";
+  // A completed or in-flight turn proves the earlier stages ran; before the
+  // first turn nothing has run yet, so those steps wait.
+  const settled = state.turnId !== null || state.response !== null;
   return CONVERSATION_STAGES.map((stage, index) => {
     let step: ConversationStageState;
-    if (index < activeIndex) step = "done";
-    else if (index === activeIndex) step = failed ? "error" : "current";
-    else step = "waiting";
+    if (failed) {
+      if (index < activeIndex) step = "done";
+      else if (index === activeIndex) step = "error";
+      else step = "waiting";
+    } else if (activeStage !== "ready") {
+      if (index < activeIndex) step = "done";
+      else if (index === activeIndex) step = "current";
+      else step = "waiting";
+    } else {
+      step = index < activeIndex ? (settled ? "done" : "waiting") : index === activeIndex ? "current" : "waiting";
+    }
     return { stage, state: step };
   });
 }
