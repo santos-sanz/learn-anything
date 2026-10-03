@@ -28,12 +28,18 @@ export default defineSchema({
    * S21 adds optional `goal` and `mode` for onboarding/goal-mode selection.
    * Both are optional so v3 rows stay valid without a backfill; `mode` uses the
    * two learner-facing tracks only (S19/S20 implement the tutor behaviour).
+   *
+   * S20 (v9) adds optional `objective` and `difficulty` for the concept-learning
+   * selection: existing rows read as unset, and only `concept.selectObjectiveAndDifficulty`
+   * writes them, so the selection surface stays separate from S19's mode code.
    */
   projects: defineTable({
     ownerId: v.string(),
     name: v.string(),
     goal: v.optional(v.string()),
     mode: v.optional(v.union(v.literal("language-practice"), v.literal("concept-learning"))),
+    objective: v.optional(v.string()),
+    difficulty: v.optional(v.union(v.literal("beginner"), v.literal("intermediate"), v.literal("advanced"))),
     createdAt: v.number(),
     deletedAt: v.union(v.null(), v.number()),
   }).index("by_owner", ["ownerId"]),
@@ -66,12 +72,51 @@ export default defineSchema({
     .index("by_owner_project_session", ["ownerId", "projectId", "sessionId"])
     .index("by_owner_project_turn", ["ownerId", "projectId", "turnId"])
     .index("by_owner_project_idempotency", ["ownerId", "projectId", "idempotencyKey"]),
+  /**
+   * S04 progress events. `eventType` stays an open string so the original
+   * `projects.recordProgress` contract is unchanged; every S20 field below is
+   * optional and additive (v9), so an S04-era row still validates and reads as
+   * unset.
+   *
+   * S20 writes three typed event types: `activity-completed` (an explain /
+   * socratic / teach-back / quiz turn finished, with its objective+difficulty
+   * snapshot, outcome, evidence status and the retrieved chunk references the
+   * feedback links to), `feedback-given` (`targetEventId` + `feedbackValue`)
+   * and `feedback-retracted` (the recorded reversal of a feedback event; the
+   * retracted row itself also carries `retractedAt`). `idempotencyKey` makes an
+   * activity event retry-safe under its turn's id, and `by_owner_project_target`
+   * supports the bounded active-feedback lookup without a scan.
+   */
   progressEvents: defineTable({
     ownerId: v.string(),
     projectId: v.id("projects"),
     eventType: v.string(),
     createdAt: v.number(),
-  }).index("by_owner_project", ["ownerId", "projectId"]),
+    idempotencyKey: v.optional(v.string()),
+    activity: v.optional(v.union(v.literal("explain"), v.literal("socratic"), v.literal("teach-back"), v.literal("quiz"))),
+    objective: v.optional(v.string()),
+    difficulty: v.optional(v.union(v.literal("beginner"), v.literal("intermediate"), v.literal("advanced"))),
+    outcome: v.optional(v.union(v.literal("completed"), v.literal("correct"), v.literal("partially-correct"), v.literal("wrong"), v.literal("uncertain"))),
+    evidence: v.optional(v.union(v.literal("ok"), v.literal("insufficient-evidence"))),
+    turnId: v.optional(v.string()),
+    references: v.optional(
+      v.array(
+        v.object({
+          chunkId: v.id("documentChunks"),
+          documentId: v.id("documents"),
+          seq: v.number(),
+          page: v.union(v.null(), v.number()),
+          heading: v.union(v.null(), v.string()),
+        }),
+      ),
+    ),
+    targetEventId: v.optional(v.id("progressEvents")),
+    feedbackValue: v.optional(v.union(v.literal("helpful"), v.literal("not-helpful"))),
+    retractedAt: v.optional(v.number()),
+  })
+    .index("by_owner_project", ["ownerId", "projectId"])
+    .index("by_owner_project_idempotency", ["ownerId", "projectId", "idempotencyKey"])
+    .index("by_owner_project_target", ["ownerId", "projectId", "targetEventId"]),
   /**
    * S14 one row per submitted tutor turn, keyed by (ownerId, projectId,
    * turnId). It is the linearization point for idempotency and cancellation:

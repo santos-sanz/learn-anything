@@ -105,13 +105,13 @@ type TurnStatus = "running" | "completed" | "cancelled" | "failed";
 type AnswerBasis = "document-backed" | "general-explanation";
 
 const modeValidator = v.union(v.literal("language-practice"), v.literal("concept-learning"));
-const evidenceValidator = v.object({
+export const evidenceValidator = v.object({
   status: v.union(v.literal("ok"), v.literal("insufficient-evidence")),
   reason: v.union(v.null(), v.string()),
 });
-const answerBasisValidator = v.union(v.literal("document-backed"), v.literal("general-explanation"));
+export const answerBasisValidator = v.union(v.literal("document-backed"), v.literal("general-explanation"));
 
-const storedCitationValidator = v.object({
+export const storedCitationValidator = v.object({
   rank: v.number(),
   retrievalRank: v.number(),
   documentId: v.id("documents"),
@@ -206,7 +206,7 @@ function tutorTimeoutMs(): number {
  * personal key never serves a learner who is not the deployer, and no other
  * provider is ever constructed on this path.
  */
-function tutorClient(ownerId: string): NanClient | null {
+export function tutorClient(ownerId: string): NanClient | null {
   const apiKey = (process.env.NAN_API_KEY ?? "").trim();
   if (apiKey === "") return null;
   const deployerId = (process.env.NAN_DEPLOYER_ID ?? "").trim();
@@ -236,7 +236,7 @@ function turnError(code: string): ConvexError<{ code: string }> {
   return new ConvexError({ code });
 }
 
-function requireTurnId(value: string): string {
+export function requireTurnId(value: string): string {
   const turnId = value.trim();
   let control = false;
   for (let index = 0; index < turnId.length; index += 1) {
@@ -246,7 +246,7 @@ function requireTurnId(value: string): string {
   return turnId;
 }
 
-function requireLearnerText(value: string): string {
+export function requireLearnerText(value: string): string {
   const text = value.trim();
   if (text === "") throw new ConvexError({ code: "INVALID_ARGUMENT" });
   if (text.length > MAX_LEARNER_TEXT_CHARS) {
@@ -255,7 +255,7 @@ function requireLearnerText(value: string): string {
   return text;
 }
 
-function resolveSessionKey(value: string | undefined): string {
+export function resolveSessionKey(value: string | undefined): string {
   if (value === undefined) return DEFAULT_SESSION_KEY;
   const sessionKey = value.trim();
   if (sessionKey === "" || sessionKey.length > MAX_TURN_ID_CHARS) throw new ConvexError({ code: "INVALID_ARGUMENT" });
@@ -861,7 +861,7 @@ function turnFailureCode(error: unknown): TurnFailure {
   return { code: failure.code, ...(failure.retryAfterMs === undefined ? {} : { retryAfterMs: failure.retryAfterMs }) };
 }
 
-async function safeFailTurn(
+export async function safeFailTurn(
   ctx: ActionCtx,
   ownerId: string,
   projectId: Id<"projects">,
