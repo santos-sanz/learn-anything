@@ -17,6 +17,7 @@ import type * as embeddings from "../embeddings.js";
 import type * as files from "../files.js";
 import type * as http from "../http.js";
 import type * as ingestion from "../ingestion.js";
+import type * as languagePractice from "../languagePractice.js";
 import type * as migrations from "../migrations.js";
 import type * as projects from "../projects.js";
 import type * as redirects from "../redirects.js";
@@ -44,6 +45,7 @@ declare const fullApi: ApiFromModules<{
   files: typeof files;
   http: typeof http;
   ingestion: typeof ingestion;
+  languagePractice: typeof languagePractice;
   migrations: typeof migrations;
   projects: typeof projects;
   redirects: typeof redirects;
