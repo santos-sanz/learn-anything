@@ -51,17 +51,19 @@ general frontend.
 serves the static Vite build of `packages/app`; Convex hosts the backend
 (functions, auth, storage, HTTP actions); Cloudflare Workers Free hosts only
 the project-scoped agents. The repository carries the frontend contract it
-can own: a headers-only `vercel.json` with the security-header set including
-the microphone permission policy. The output directory and the rest of the
-build contract live in Vercel project settings (owner authority) and were
-recorded from the working production build of 2026-10-03: install `pnpm
-install`, build `pnpm run build`, output `packages/app/dist`, Node version
-24.x — two preview experiments on 2026-10-03 proved a root `vercel.json`
-cannot override this project's output resolution
-(`STATIC_BUILD_NO_OUT_DIR`; runbook section 13.1), and the root
-`package.json` `engines.node` (`>=22`, satisfied by CI's Node 22.14.0) is the
-workspace requirement that does **not** select the Vercel build Node
-(verified: a `22.x` engines pin was ignored by Vercel). Convex Auth
+can own: `packages/app/vercel.json` — the honoured config location for this
+project — with the output directory (`dist`, i.e. `packages/app/dist`) and
+the security-header set including the microphone permission policy. The
+framework preset, install/build commands and the Node version live in Vercel
+project settings (owner authority), recorded from the working production
+build of 2026-10-03 (`pnpm install`, `pnpm run build`, Node 24.x). Three
+preview deployments on 2026-10-03 established that a repository-root
+`vercel.json` is **not** authoritative here: two `STATIC_BUILD_NO_OUT_DIR`
+failures and one READY deployment that served none of the custom headers
+(runbook section 13.1). The root `package.json` `engines.node` (`>=22`,
+satisfied by CI's Node 22.14.0) is the workspace requirement that does
+**not** select the Vercel build Node (verified: a `22.x` engines pin was
+ignored by Vercel). Convex Auth
 redirect/CORS allowlists stay exact-match per environment (`SITE_URL`,
 `AUTH_REDIRECT_URIS`); Vercel preview/production origins are added as exact
 origins only, never wildcards. This ADR is documentation and configuration: it
