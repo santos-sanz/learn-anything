@@ -455,11 +455,15 @@ export class ConversationController {
     const snapshot = player.getSnapshot();
     this.dispatch({ type: "SET_PLAYER", player: snapshot });
     switch (snapshot.phase) {
-      case "loading":
       case "playing":
+        // The speaking stage is budgeted to the moment audio actually plays,
+        // so the recorded duration covers the TTS fetch and playback start.
+        this.latencyRecorder.markSpeaking(this.now());
+        this.dispatch({ type: "PLAYER_ACTIVE" });
+        return;
+      case "loading":
       case "paused":
       case "autoplay-blocked":
-        this.latencyRecorder.markSpeaking(this.now());
         this.dispatch({ type: "PLAYER_ACTIVE" });
         return;
       case "failed": {

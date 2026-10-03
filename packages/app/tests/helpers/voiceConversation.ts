@@ -1,12 +1,10 @@
-import type {
-  ConversationBackend,
-  ConversationTranscriptPage,
-  ConversationTurn,
-  RunTurnFailure,
-  RunTurnInput,
-} from "../../src/data/conversation.js";
+import { syntheticEmbeddingVector } from "../../../api/tests/helpers/embeddingProvider.js";
+import { makeConvexConversationBackend } from "../../src/data/conversation.js";
+import type { ConversationBackend, ConversationTranscriptPage, ConversationTurn, RunTurnFailure, RunTurnInput } from "../../src/data/conversation.js";
 import type { SpeechOptions, TutorResponseSummary, TutorTurnSummary } from "../../src/data/tutor.js";
+import { browserTurnEnvironment } from "../../src/environments.js";
 import type { PlayerPlayback, ResponsePlayerEnvironment } from "../../src/playerController.js";
+import { requestTtsAudio } from "../../src/ttsClient.js";
 import type { CaptureRecording, CaptureSubscription, TurnEnvironment } from "../../src/turnController.js";
 import type { TranscribeResult } from "../../src/transcribeClient.js";
 
@@ -255,4 +253,85 @@ export function captureHarness(options: { scheduleMaxMs?: number } = {}) {
       transcribe = impl;
     },
   };
+}
+
+/* ------------------------------------------------------------------ *
+ * Shared convex-test bindings for the S17 end-to-end suites
+ * ------------------------------------------------------------------ */
+
+/** Deterministic offline NaN answers: embeddings, SSE chat, Whisper, Kokoro. */
+export function installVoiceProviderMock() {
+  const counts = { embeddings: 0, chat: 0, transcriptions: 0, speech: 0 };
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: unknown, init?: RequestInit) => {
+    const url = String(input);
+    const body = typeof init?.body === "string" ? (JSON.parse(init.body) as { input?: unknown }) : null;
+    if (url.endsWith("/embeddings")) {
+      counts.embeddings += 1;
+      const texts = Array.isArray(body?.input) ? body.input : [];
+      return Response.json({
+        model: "qwen3-embedding",
+        data: texts.map((_, index) => ({ embedding: syntheticEmbeddingVector(index + 1) })),
+      });
+    }
+    if (url.endsWith("/chat/completions")) {
+      counts.chat += 1;
+      const encoder = new TextEncoder();
+      const pieces = ANSWER.match(/.{1,16}/gs) ?? [];
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          for (const piece of pieces) {
+            controller.enqueue(encoder.encode(`data: ${JSON.stringify({ choices: [{ delta: { content: piece } }] })}\n\n`));
+          }
+          controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+          controller.close();
+        },
+      });
+      return new Response(stream, { status: 200 });
+    }
+    if (url.endsWith("/audio/transcriptions")) {
+      counts.transcriptions += 1;
+      return Response.json({ text: QUESTION, language: "en", duration: 1.5 });
+    }
+    if (url.endsWith("/audio/speech")) {
+      counts.speech += 1;
+      return new Response(new Uint8Array([0x49, 0x44, 0x33, 0x04]), { status: 200, headers: { "content-type": "audio/mpeg" } });
+    }
+    throw new Error(`offline voice test attempted an unexpected provider call: ${url}`);
+  }) as typeof globalThis.fetch;
+  return {
+    counts,
+    restore: () => {
+      globalThis.fetch = originalFetch;
+    },
+  };
+}
+
+/**
+ * The S17 ports bound to one authenticated convex-test instance: real STT/TTS
+ * HTTP routes (through a fetch adapter that unwraps jsdom Blobs the way a
+ * browser request would), the real `runTurn` action, and the scripted
+ * microphone/player devices.
+ */
+export function convexVoicePorts(a: { fetch: (path: string, init?: RequestInit) => Promise<Response> }) {
+  const guardedFetch = async (input: string, init?: RequestInit) => {
+    const body = init?.body;
+    const normalized = body instanceof Blob ? { ...init, body: new Uint8Array(await body.arrayBuffer()) } : init;
+    return a.fetch(input, normalized);
+  };
+  const backend = makeConvexConversationBackend(a as unknown as Parameters<typeof makeConvexConversationBackend>[0]);
+  const httpCapture = browserTurnEnvironment({ siteUrl: "", getToken: () => "synthetic-test-token", fetchImpl: guardedFetch });
+  const device = captureHarness().env;
+  const capture: TurnEnvironment = { ...device, transcribe: httpCapture.transcribe, translateAudio: httpCapture.translateAudio };
+  const playbacks: FakePlayback[] = [];
+  const playback: ResponsePlayerEnvironment = {
+    fetchAudio: ({ projectId, turnId, language, voice, signal }) =>
+      requestTtsAudio({ siteUrl: "", token: "synthetic-test-token", projectId, turnId, language, voice, signal, fetchImpl: guardedFetch }),
+    createPlayback: async () => {
+      const playback = fakePlayback();
+      playbacks.push(playback);
+      return playback;
+    },
+  };
+  return { backend, capture, playback, playbacks };
 }

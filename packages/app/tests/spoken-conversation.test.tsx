@@ -67,8 +67,8 @@ test("every stage is visible with a state word, and the status line follows the 
   expect(screen.getByText(/Listening: recording your turn/)).toBeTruthy();
 
   // transcribing: hold the STT round trip so the stage is observable.
-  let finishTranscription: ((result: TranscribeResult) => void) | null = null;
-  capture.setTranscribe(() => new Promise<TranscribeResult>((resolve) => { finishTranscription = resolve; }));
+  const transcribeGate: { resolve: ((result: TranscribeResult) => void) | null } = { resolve: null };
+  capture.setTranscribe(() => new Promise<TranscribeResult>((resolve) => { transcribeGate.resolve = resolve; }));
   await user.click(screen.getByRole("button", { name: "Stop and transcribe" }));
   await waitFor(() => expect(stageResult("transcribing")).toBe("in progress"));
   expect(screen.getByText(/Transcribing your turn with speech-to-text/)).toBeTruthy();
@@ -76,8 +76,8 @@ test("every stage is visible with a state word, and the status line follows the 
 
   // generating: retrieval + generation with its own cancel.
   store.hold();
-  if (finishTranscription === null) throw new Error("transcribe promise was never created");
-  finishTranscription({ ok: true, text: QUESTION, detectedLanguage: "en", durationMs: 1.5, turnId: "turn-1" });
+  if (transcribeGate.resolve === null) throw new Error("transcribe promise was never created");
+  transcribeGate.resolve({ ok: true, text: QUESTION, detectedLanguage: "en", durationMs: 1.5, turnId: "turn-1" });
   await waitFor(() => expect(stageResult("generating")).toBe("in progress"));
   expect(screen.getByText(/Retrieving sources and generating the tutor/)).toBeTruthy();
   expect(screen.getByRole("button", { name: "Cancel turn" })).toBeTruthy();
