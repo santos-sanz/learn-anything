@@ -9,6 +9,7 @@
  */
 
 import type * as agentSessions from "../agentSessions.js";
+import type * as audioLimits from "../audioLimits.js";
 import type * as auth from "../auth.js";
 import type * as concept from "../concept.js";
 import type * as cors from "../cors.js";
@@ -20,6 +21,7 @@ import type * as http from "../http.js";
 import type * as ingestion from "../ingestion.js";
 import type * as languagePractice from "../languagePractice.js";
 import type * as migrations from "../migrations.js";
+import type * as observability from "../observability.js";
 import type * as projects from "../projects.js";
 import type * as redirects from "../redirects.js";
 import type * as retrieval from "../retrieval.js";
@@ -38,6 +40,7 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   agentSessions: typeof agentSessions;
+  audioLimits: typeof audioLimits;
   auth: typeof auth;
   concept: typeof concept;
   cors: typeof cors;
@@ -49,6 +52,7 @@ declare const fullApi: ApiFromModules<{
   ingestion: typeof ingestion;
   languagePractice: typeof languagePractice;
   migrations: typeof migrations;
+  observability: typeof observability;
   projects: typeof projects;
   redirects: typeof redirects;
   retrieval: typeof retrieval;

@@ -4,9 +4,11 @@ import {
   TRANSLATION_LANGUAGES,
   isTranslationLanguage,
 } from "../../worker/src/nan/index";
+import { maxAudioDurationMs, maxAudioDurationSeconds, parseAudioDurationMs } from "./audioLimits";
 import { internal } from "./_generated/api";
 import { httpAction } from "./_generated/server";
 import { corsHeaders, readCorsAllowlist } from "./cors";
+import { retryAfterHeader } from "./observability";
 import { requireUserId } from "./projects";
 import {
   DEFAULT_PROVIDER_TIMEOUT_MS,
@@ -72,10 +74,10 @@ function failureBody(failure: ReturnType<typeof mapProviderFailure>): Record<str
  */
 export const translateAudioRoute = httpAction(async (ctx, request) => {
   const cors = corsHeaders(request.headers.get("Origin"), readCorsAllowlist());
-  const json = (body: unknown, status: number): Response =>
+  const json = (body: unknown, status: number, extraHeaders: Record<string, string> = {}): Response =>
     new Response(JSON.stringify(body), {
       status,
-      headers: { ...cors, "content-type": "application/json", "cache-control": "private, no-store" },
+      headers: { ...cors, "content-type": "application/json", "cache-control": "private, no-store", ...extraHeaders },
     });
 
   let ownerId: string;
@@ -123,6 +125,12 @@ export const translateAudioRoute = httpAction(async (ctx, request) => {
   if (bytes.byteLength === 0) return json({ code: "INVALID_ARGUMENT" }, 400);
   if (bytes.byteLength > MAX_AUDIO_BYTES) return json({ code: "AUDIO_TOO_LARGE" }, 413);
 
+  // S24 duration cap: the container's own header is checked before any provider work.
+  const declaredDurationMs = parseAudioDurationMs(bytes, contentType);
+  if (declaredDurationMs !== null && declaredDurationMs > maxAudioDurationMs()) {
+    return json({ code: "AUDIO_TOO_LONG", maxDurationSeconds: maxAudioDurationSeconds() }, 413);
+  }
+
   const client = providerClient(ownerId, configuredTimeoutMs("TRANSLATION_TIMEOUT_MS"));
   if (client === null) return json({ code: "TRANSLATION_NOT_CONFIGURED" }, 503);
 
@@ -135,7 +143,8 @@ export const translateAudioRoute = httpAction(async (ctx, request) => {
     return json({ turnId, text: result.text, language: "en", target: "en" }, 200);
   } catch (error) {
     const failure = mapProviderFailure(error, audioFailureScope);
-    return json(failureBody(failure), failure.status);
+    const body = failureBody(failure);
+    return json(body, failure.status, failure.status === 429 ? retryAfterHeader(body) : {});
   }
 });
 
@@ -146,10 +155,10 @@ export const translateAudioRoute = httpAction(async (ctx, request) => {
  */
 export const translateTextRoute = httpAction(async (ctx, request) => {
   const cors = corsHeaders(request.headers.get("Origin"), readCorsAllowlist());
-  const json = (body: unknown, status: number): Response =>
+  const json = (body: unknown, status: number, extraHeaders: Record<string, string> = {}): Response =>
     new Response(JSON.stringify(body), {
       status,
-      headers: { ...cors, "content-type": "application/json", "cache-control": "private, no-store" },
+      headers: { ...cors, "content-type": "application/json", "cache-control": "private, no-store", ...extraHeaders },
     });
 
   let ownerId: string;
@@ -198,6 +207,7 @@ export const translateTextRoute = httpAction(async (ctx, request) => {
     return json({ source, target, translation, unchanged: false }, 200);
   } catch (error) {
     const failure = mapProviderFailure(error, textFailureScope);
-    return json(failureBody(failure), failure.status);
+    const body = failureBody(failure);
+    return json(body, failure.status, failure.status === 429 ? retryAfterHeader(body) : {});
   }
 });

@@ -10,6 +10,9 @@ import { v } from "convex/values";
  */
 export default defineSchema({
   ...authTables,
+  // S24: session-bound PKCE verifiers must be removable with their session
+  // during account deletion, and `authTables` indexes only `signature`.
+  authVerifiers: authTables.authVerifiers.index("sessionId", ["sessionId"]),
   schemaMetadata: defineTable({
     key: v.literal("primary"),
     schemaVersion: v.number(),
@@ -57,7 +60,10 @@ export default defineSchema({
     ),
     createdAt: v.number(),
     deletedAt: v.union(v.null(), v.number()),
-  }).index("by_owner", ["ownerId"]),
+  })
+    .index("by_owner", ["ownerId"])
+    // S24: exact live/soft-deleted probes for the account-deletion sweep.
+    .index("by_owner_deleted", ["ownerId", "deletedAt"]),
   learningGoals: defineTable({
     ownerId: v.string(),
     projectId: v.id("projects"),
@@ -172,7 +178,9 @@ export default defineSchema({
   })
     .index("by_owner_project", ["ownerId", "projectId"])
     .index("by_owner_project_turn", ["ownerId", "projectId", "turnId"])
-    .index("by_owner_project_session", ["ownerId", "projectId", "sessionId"]),
+    .index("by_owner_project_session", ["ownerId", "projectId", "sessionId"])
+    // S24: counts one learner's live `running` rows for the concurrent-turn cap.
+    .index("by_owner_status", ["ownerId", "status"]),
   /**
    * S14 stored citation references attached to a tutor message. The chunk is
    * the citation's identity: `documentId`/`seq`/`contentHash`/`page`/`heading`
@@ -231,6 +239,72 @@ export default defineSchema({
   })
     .index("by_owner_project", ["ownerId", "projectId"])
     .index("by_storage_id", ["storageId"]),
+  /**
+   * S24 per-learner fixed-window request counters. One row per
+   * (ownerId, bucket) holds the current window; the wrapper re-arms it when
+   * the window elapses. Rows carry no request content — only the owner, the
+   * route bucket, the window start and the count — and are swept with the
+   * account, never with a project (they are not project data).
+   */
+  rateLimitBuckets: defineTable({
+    ownerId: v.string(),
+    bucket: v.string(),
+    windowStart: v.number(),
+    count: v.number(),
+    updatedAt: v.number(),
+  }).index("by_owner_bucket", ["ownerId", "bucket"]),
+  /**
+   * S24 redacted telemetry: ids and timings only, enforced twice — the table
+   * validator fixes the field set, and `buildTelemetryRow` gates every free
+   * string through an allowlist/regex so a prompt, transcript, document byte
+   * or credential can never enter. Rows always name an owned project so a
+   * project deletion removes them with everything else that references it.
+   * `LOG_RETENTION_DAYS` bounds their life; the hourly cleanup cron is the
+   * rotation step.
+   */
+  telemetryEvents: defineTable({
+    traceId: v.string(),
+    ownerId: v.string(),
+    projectId: v.id("projects"),
+    event: v.string(),
+    status: v.union(
+      v.literal("ok"),
+      v.literal("denied"),
+      v.literal("rejected"),
+      v.literal("rate-limited"),
+      v.literal("cancelled"),
+      v.literal("error"),
+    ),
+    durationMs: v.optional(v.number()),
+    code: v.optional(v.string()),
+    retryAfterMs: v.optional(v.number()),
+    attempts: v.optional(v.number()),
+    createdAt: v.number(),
+  })
+    .index("by_owner_project", ["ownerId", "projectId"])
+    .index("by_created", ["createdAt"]),
+  /**
+   * S24 privacy-lifecycle ledger: one active row per project or account
+   * deletion so an interrupted, failed or capped cleanup has a visible
+   * `pending`/`deleting`/`failed` state the owner can resume instead of an
+   * invisible half-delete. `projectId` is cleared when a project deletion
+   * completes, so a finished request never dangles a reference; failure codes
+   * are fixed uppercase tokens (never a message) set only by
+   * `reportDeletionFailure`.
+   */
+  deletionRequests: defineTable({
+    ownerId: v.string(),
+    scope: v.union(v.literal("project"), v.literal("account")),
+    projectId: v.optional(v.id("projects")),
+    status: v.union(v.literal("pending"), v.literal("deleting"), v.literal("failed"), v.literal("completed")),
+    failureCode: v.union(v.null(), v.string()),
+    attempts: v.number(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+    completedAt: v.optional(v.number()),
+  })
+    .index("by_owner", ["ownerId", "createdAt"])
+    .index("by_project", ["projectId"]),
   /**
    * S06 agent connection tokens: a hash of a short-lived secret bound to one
    * owner and project. The plaintext exists only in the issue/rotate response.

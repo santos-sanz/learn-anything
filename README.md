@@ -73,7 +73,7 @@ Cloudflare agent state is session/runtime state only; Convex owns durable projec
 - Convex deployment-admin credentials and NaN keys stay server-side; no admin client in browser.
 - Validate Convex identity and project ownership at agent entry points and on reconnect; clients cannot pick another learner's agent instance or read another project's state.
 - Rate-limit costly routes, cap uploads and audio duration, redact logs and prevent cross-tenant caches.
-- Defer provider data processing and multiuser deployment until privacy/retention terms are reviewed.
+- Defer provider data processing and multiuser deployment until privacy/retention terms are reviewed; the known/unknown/agreement split is recorded in `docs/provider-data-handling.md`.
 - Secret scanning, dependency checks and deterministic tests gate pull requests.
 
 ## Development factory contract

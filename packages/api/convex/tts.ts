@@ -10,6 +10,7 @@ import { ConvexError, v } from "convex/values";
 import { internal } from "./_generated/api";
 import { httpAction, internalQuery, query } from "./_generated/server";
 import { corsHeaders, readCorsAllowlist } from "./cors";
+import { retryAfterHeader } from "./observability";
 import { requireOwnedProject, requireUserId } from "./projects";
 import {
   DEFAULT_PROVIDER_TIMEOUT_MS,
@@ -124,10 +125,10 @@ function failureBody(failure: ReturnType<typeof mapProviderFailure>): Record<str
  */
 export const synthesizeSpeechRoute = httpAction(async (ctx, request) => {
   const cors = corsHeaders(request.headers.get("Origin"), readCorsAllowlist());
-  const json = (body: unknown, status: number): Response =>
+  const json = (body: unknown, status: number, extraHeaders: Record<string, string> = {}): Response =>
     new Response(JSON.stringify(body), {
       status,
-      headers: { ...cors, "content-type": "application/json", "cache-control": "private, no-store" },
+      headers: { ...cors, "content-type": "application/json", "cache-control": "private, no-store", ...extraHeaders },
     });
 
   let ownerId: string;
@@ -197,6 +198,7 @@ export const synthesizeSpeechRoute = httpAction(async (ctx, request) => {
     });
   } catch (error) {
     const failure = mapProviderFailure(error, ttsFailureScope);
-    return json(failureBody(failure), failure.status);
+    const body = failureBody(failure);
+    return json(body, failure.status, failure.status === 429 ? retryAfterHeader(body) : {});
   }
 });

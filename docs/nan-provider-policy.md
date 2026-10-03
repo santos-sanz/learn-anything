@@ -24,4 +24,6 @@ An opt-in live smoke is deliberately not part of CI: source `NAN_API_KEY` into a
 
 ## Operational limits and rollback
 
-No live provider call is retried automatically; rate limits surface `retryAfterMs`, and quota exhaustion/unsupported models remain visible. Rollback is a code rollback that removes the adapter from server routing; it must not substitute another provider, pool a key, or bypass the single-user policy gate. S12 separately validates Convex's actual 4096-dimension index compatibility before embeddings are persisted.
+The known/unknown split for payloads, retention and the agreements required before hosted deployment lives in `docs/provider-data-handling.md` (S24; documentation only — no provider contact was made for it).
+
+No live provider call is retried automatically; rate limits surface `retryAfterMs` (and, since S24, the standard `Retry-After` header), and quota exhaustion/unsupported models remain visible. Rollback is a code rollback that removes the adapter from server routing; it must not substitute another provider, pool a key, or bypass the single-user policy gate. S12 separately validates Convex's actual 4096-dimension index compatibility before embeddings are persisted.

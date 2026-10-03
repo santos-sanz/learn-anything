@@ -644,9 +644,11 @@ export const runActivity = action({
       const code =
         begin.state === "in-progress"
           ? "TURN_IN_PROGRESS"
-          : begin.state === "cancelled"
-            ? "TURN_CANCELLED"
-            : (begin.failureCode ?? "TURN_FAILED");
+          : begin.state === "rate-limited"
+            ? "TURN_CONCURRENCY_LIMIT"
+            : begin.state === "cancelled"
+              ? "TURN_CANCELLED"
+              : (begin.failureCode ?? "TURN_FAILED");
       throw conceptError(code);
     }
     const token = begin.attemptToken;
