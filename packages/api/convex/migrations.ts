@@ -33,7 +33,6 @@ export const checkCompatibility = internalQuery({
 const BACKFILL_BATCH = 100;
 
 /**
-/**
  * S22 resumable marker migration for schema/function version 9: the optional
  * `documents.deletedAt` deletion tombstone and the `documentChunks`
  * `by_document_seq` index (both additive; S14's version 8 added the
@@ -49,8 +48,7 @@ const BACKFILL_BATCH = 100;
  * changes nothing twice. `maxAttempts` stays optional and is resolved at read
  * time, so no backfill depends on deployment configuration.
  */
-export const bootstrapSchemaV9 = internalMutation({ */
-export const bootstrapSchemaV8 = internalMutation({
+export const bootstrapSchemaV9 = internalMutation({
   args: {},
   returns: migrationResult,
   handler: async (ctx) => {

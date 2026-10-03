@@ -237,9 +237,9 @@ test("a schema version 4 deployment backfills S09 fields on existing jobs", asyn
   expect(state.job).toMatchObject({ status: "queued", attempts: 0, nextAttemptAt: now });
   expect(state.job?.maxAttempts).toBeUndefined();
   expect(state.metadata).toMatchObject({ schemaVersion: 9, functionVersion: 9 });
-  const versionEightRuns = state.runs.filter((entry) => entry.migration === "bootstrap-schema-v8");
-  expect(versionEightRuns).toHaveLength(1);
-  expect(versionEightRuns[0].attempts).toBeGreaterThan(2);
+  const versionNineRuns = state.runs.filter((entry) => entry.migration === "bootstrap-schema-v9");
+  expect(versionNineRuns).toHaveLength(1);
+  expect(versionNineRuns[0].attempts).toBeGreaterThan(2);
 });
 
 test("a schema version 2 deployment upgrades in place without data loss", async () => {
