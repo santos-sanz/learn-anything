@@ -13,4 +13,12 @@ const crons = cronJobs();
  */
 crons.interval("ingestion-cycle", { minutes: 5 }, internal.ingestion.runIngestionCycle, {});
 
+/**
+ * S24 log retention: one bounded cleanup batch per hour deletes telemetry
+ * rows older than `LOG_RETENTION_DAYS`, so the table rotates instead of
+ * growing without limit. The batch is capped (100 rows), so an oversized
+ * backlog drains across hourly runs instead of one unbounded mutation.
+ */
+crons.interval("telemetry-retention", { hours: 1 }, internal.observability.cleanupTelemetry, {});
+
 export default crons;

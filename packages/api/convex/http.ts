@@ -12,6 +12,7 @@ import {
   validateUploadMediaType,
 } from "./documents";
 import { internal } from "./_generated/api";
+import { observedRoute } from "./observability";
 import type { Id } from "./_generated/dataModel";
 import { httpAction } from "./_generated/server";
 import { requireUserId } from "./projects";
@@ -97,7 +98,7 @@ http.route({ path: "/agent/connection-tokens/reconnect", method: "POST", handler
  * keeps it. The response is status metadata only: never file bytes and never
  * a `storage.getUrl` bearer link.
  */
-http.route({ path: "/private-uploads", method: "POST", handler: httpAction(async (ctx, request) => {
+http.route({ path: "/private-uploads", method: "POST", handler: observedRoute({ event: "private-upload" }, httpAction(async (ctx, request) => {
   let ownerId: string;
   try {
     ownerId = await requireUserId(ctx);
@@ -182,7 +183,7 @@ http.route({ path: "/private-uploads", method: "POST", handler: httpAction(async
     if (code === "UPLOAD_FAILED") return jsonResponse({ code: "UPLOAD_FAILED" }, 500);
     return jsonResponse({ code: "INTERNAL_ERROR" }, 500);
   }
-}) });
+})) });
 
 /**
  * Private bytes, including S08 documents, are served only here: identity is
@@ -217,7 +218,7 @@ http.route({ pathPrefix: "/private-files/", method: "GET", handler: httpAction(a
  * allow-origin header through `transcribeTurnRoute` (see `cors.ts`).
  */
 http.route({ path: "/stt/transcribe", method: "OPTIONS", handler: corsPreflightRoute });
-http.route({ path: "/stt/transcribe", method: "POST", handler: transcribeTurnRoute });
+http.route({ path: "/stt/transcribe", method: "POST", handler: observedRoute({ event: "stt-transcribe", cors: true }, transcribeTurnRoute) });
 
 /**
  * S18 explicit translation. Audio translation is English-only by provider
@@ -225,9 +226,9 @@ http.route({ path: "/stt/transcribe", method: "POST", handler: transcribeTurnRou
  * preflight exactly like the S15 route because both send `Authorization`.
  */
 http.route({ path: "/translation/audio", method: "OPTIONS", handler: corsPreflightRoute });
-http.route({ path: "/translation/audio", method: "POST", handler: translateAudioRoute });
+http.route({ path: "/translation/audio", method: "POST", handler: observedRoute({ event: "translation-audio", cors: true }, translateAudioRoute) });
 http.route({ path: "/translation/text", method: "OPTIONS", handler: corsPreflightRoute });
-http.route({ path: "/translation/text", method: "POST", handler: translateTextRoute });
+http.route({ path: "/translation/text", method: "POST", handler: observedRoute({ event: "translation-text", cors: true }, translateTextRoute) });
 
 /**
  * S16 Kokoro speech synthesis. The browser authenticates with its Convex Auth
@@ -236,7 +237,7 @@ http.route({ path: "/translation/text", method: "POST", handler: translateTextRo
  * never stored, never exposed as a `storage.getUrl` bearer link.
  */
 http.route({ path: "/tts/synthesize", method: "OPTIONS", handler: corsPreflightRoute });
-http.route({ path: "/tts/synthesize", method: "POST", handler: synthesizeSpeechRoute });
+http.route({ path: "/tts/synthesize", method: "POST", handler: observedRoute({ event: "tts-synthesize", cors: true }, synthesizeSpeechRoute) });
 
 auth.addHttpRoutes(http);
 

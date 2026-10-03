@@ -1,9 +1,11 @@
 import { ConvexError, v } from "convex/values";
 
 import { NanAdapterError, NanClient } from "../../worker/src/nan/index";
+import { maxAudioDurationMs, maxAudioDurationSeconds, parseAudioDurationMs } from "./audioLimits";
 import { internal } from "./_generated/api";
 import { httpAction, internalQuery } from "./_generated/server";
 import { corsHeaders, readCorsAllowlist } from "./cors";
+import { retryAfterHeader } from "./observability";
 import { requireOwnedProject, requireUserId } from "./projects";
 
 /**
@@ -139,8 +141,11 @@ export function fileExtensionFor(contentType: string): string {
  */
 export const transcribeTurnRoute = httpAction(async (ctx, request) => {
   const cors = corsHeaders(request.headers.get("Origin"), readCorsAllowlist());
-  const json = (body: unknown, status: number): Response =>
-    new Response(JSON.stringify(body), { status, headers: { ...cors, "content-type": "application/json", "cache-control": "private, no-store" } });
+  const json = (body: unknown, status: number, extraHeaders: Record<string, string> = {}): Response =>
+    new Response(JSON.stringify(body), {
+      status,
+      headers: { ...cors, "content-type": "application/json", "cache-control": "private, no-store", ...extraHeaders },
+    });
 
   let ownerId: string;
   try {
@@ -177,6 +182,14 @@ export const transcribeTurnRoute = httpAction(async (ctx, request) => {
   if (bytes.byteLength === 0) return json({ code: "INVALID_ARGUMENT" }, 400);
   if (bytes.byteLength > MAX_AUDIO_BYTES) return json({ code: "AUDIO_TOO_LARGE" }, 413);
 
+  // S24 duration cap: enforced from the container's own header before any
+  // provider request; containers without a declared duration stay bounded by
+  // the byte cap above and the browser's 60-second recording budget.
+  const declaredDurationMs = parseAudioDurationMs(bytes, contentType);
+  if (declaredDurationMs !== null && declaredDurationMs > maxAudioDurationMs()) {
+    return json({ code: "AUDIO_TOO_LONG", maxDurationSeconds: maxAudioDurationSeconds() }, 413);
+  }
+
   const apiKey = (process.env.NAN_API_KEY ?? "").trim();
   if (apiKey === "") return json({ code: "STT_NOT_CONFIGURED" }, 503);
   const deployerId = (process.env.NAN_DEPLOYER_ID ?? "").trim();
@@ -200,6 +213,7 @@ export const transcribeTurnRoute = httpAction(async (ctx, request) => {
     const body: Record<string, unknown> = { code: failure.code };
     if (failure.retryAfterMs !== undefined) body.retryAfterMs = failure.retryAfterMs;
     if (failure.upstreamStatus !== undefined) body.upstreamStatus = failure.upstreamStatus;
-    return json(body, failure.status);
+    // Server and client honour the same Retry-After budget on every 429.
+    return json(body, failure.status, failure.status === 429 ? retryAfterHeader(body) : {});
   }
 });
