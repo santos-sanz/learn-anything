@@ -24,7 +24,10 @@ Configuration review, checked 2026-10-02:
 Versions pinned for this decision: `@convex-dev/auth` **0.0.96** (beta, no
 1.0 API stability promise), `@auth/core` 0.41.3 (its peer dependency; the exact pin keeps `pnpm audit --audit-level=high` at the pre-S06 baseline),
 `convex` 1.43.0, `convex-test` 0.0.60, `react` 19.1.1 with
-`ConvexAuthProvider` / `useConvexAuth` as the tested frontend binding.
+`ConvexAuthProvider` / `useConvexAuth` as the frontend binding, exercised by
+`packages/app/tests/auth-view.test.ts` (expired or signed-out session renders
+the sign-in view) and `packages/app/tests/sign-in-form.test.tsx` (labelled
+credential fields, announced sign-in errors, the documented recovery gap).
 
 ## Decision
 
@@ -66,6 +69,15 @@ the second option in `packages/api/convex/agentSessions.ts`:
   own; the plaintext token (256-bit hex) is returned once and only its
   SHA-256 hash is stored, bound to `ownerId + projectId` (never an email
   address or a bare user id).
+- Issue time enforces that binding rather than documenting it: the caller's
+  Convex Auth subject must be a full `userId|sessionId` pair, so an identity
+  that carries only an email address, only a user id, or half of that subject
+  is rejected with `UNAUTHENTICATED` before any row is written. A stored
+  record therefore cannot be bound to a partial identity.
+- The verify and reconnect routes take the connection token alone. Any
+  `ownerId`, `userId`, `email` or `projectId` fields in the request body are
+  ignored, so possession of the secret — never a claimed identity — decides
+  the scope.
 - TTL defaults to 300 seconds and is capped at 900 seconds.
 - Verify: `/agent/connection-tokens/verify` (HTTP, and the internal
   `verifyConnectionToken` mutation for `ctx.runMutation`) rejects forged
@@ -110,3 +122,20 @@ client-supplied value (S05 pattern unchanged).
 - Tests are offline: sign-in, refresh, expiry, sign-out, callback allowlist and
   agent token cases run against `convex-test`, and the OAuth tests assert that
   an intercepting `fetch` recorded zero outbound requests.
+
+## Evidence
+
+Every decision above is exercised offline; this table links each one to the
+assertion that proves it. Nothing here needs a live provider, an OAuth app or
+a secret.
+
+| Decision | Evidence |
+| --- | --- |
+| Convex Auth beta version is pinned | `packages/api/package.json` (`@convex-dev/auth` `0.0.96`); the version paragraph above |
+| Enabled methods: password always on, OAuth configuration-gated, no email provider | `packages/api/tests/auth.test.ts` — "OAuth stays disabled while the OAuth app credentials are not configured"; `packages/api/convex/auth.ts` |
+| Frontend support tested | `packages/app/tests/auth-view.test.ts` — "an expired or signed-out session resolves to the sign-in view"; `packages/app/tests/sign-in-form.test.tsx` — "the sign-in form renders labelled credentials fields and the recovery gap" |
+| Why: no paid auth SaaS and no OAuth registration authority | this file, "Context" configuration-review table |
+| Session semantics pinned in code (1 h RS256, refresh rotation, sign-out) | `packages/api/tests/auth.test.ts` — sign-in, refresh, sign-out and JWKS tests |
+| Callback allowlist: exact URIs, fail closed, foreign origin rejected | `packages/api/tests/redirects.test.ts`; `packages/api/tests/auth-callback.test.ts` — "the callback allowlist accepts only the configured origin, and a foreign origin is rejected before any outbound request" |
+| Missing, forged, malformed and expired tokens are denied with typed codes | `packages/api/tests/auth-negative-tokens.test.ts` |
+| Agent bridge: scoped identity, expiry, reconnect, no email-only or user-id-only binding | `packages/api/tests/agent-sessions.test.ts` — issue-session-bound, stored-binding and client-supplied-identity tests; `packages/agent/tests/sessionEndpoint.test.ts`, `packages/agent/tests/scope.test.ts`, `packages/agent/tests/gate.test.ts` |
