@@ -2,8 +2,7 @@
 
 The GitHub Actions **Quality gates** workflow runs on every pull request and
 push to `main`. It uses Node.js 22.14.0, which satisfies the workspace's
-`engines.node` pin (`22.x`, also the Node line Vercel builds on; see
-`vercel.json` and `docs/deployment-runbook.md` section 13), sets up pnpm 10.20.0, and installs the
+`engines.node` requirement (`>=22`), sets up pnpm 10.20.0, and installs the
 locked dependency graph with `pnpm install --frozen-lockfile`.
 
 ## What runs

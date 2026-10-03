@@ -50,17 +50,21 @@ general frontend.
 (amendment, issue #38, 2026-10-03). The hosting boundary is therefore: Vercel
 serves the static Vite build of `packages/app`; Convex hosts the backend
 (functions, auth, storage, HTTP actions); Cloudflare Workers Free hosts only
-the project-scoped agents. The repository carries the whole frontend contract
-in `vercel.json` (framework preset, install/build commands, output directory
-and the security-header set including the microphone permission policy) plus
-the pinned Node build line in the root `package.json` `engines.node`
-(`22.x`, matching CI's Node 22.14.0). Convex Auth redirect/CORS allowlists
-stay exact-match per environment (`SITE_URL`, `AUTH_REDIRECT_URIS`); Vercel
-preview/production origins are added as exact origins only, never wildcards.
-This ADR is documentation and configuration: it creates no Vercel project,
-triggers no deployment, and changes no dashboard or secret — those remain
-separate owner authority, as does setting `JWT_PRIVATE_KEY`/`JWKS` for the
-Convex deployment.
+the project-scoped agents. The repository carries the frontend contract it
+can own: `vercel.json` sets the output directory (`packages/app/dist`) and the
+security-header set including the microphone permission policy. The rest of
+the build contract lives in Vercel project settings (owner authority) and was
+recorded from the working production build of 2026-10-03: install `pnpm
+install`, build `pnpm run build`, output `packages/app/dist`, Node version
+24.x — the root `package.json` `engines.node` (`>=22`, satisfied by CI's
+Node 22.14.0) is the workspace requirement and does **not** select the Vercel
+build Node (verified: a `22.x` engines pin was ignored by Vercel). Convex Auth
+redirect/CORS allowlists stay exact-match per environment (`SITE_URL`,
+`AUTH_REDIRECT_URIS`); Vercel preview/production origins are added as exact
+origins only, never wildcards. This ADR is documentation and configuration: it
+creates no Vercel project, triggers no deployment, and changes no dashboard or
+secret — those remain separate owner authority, as does setting
+`JWT_PRIVATE_KEY`/`JWKS` for the Convex deployment.
 
 **Ingestion uses resumable Convex actions** after the browser uploads a file to
 Convex storage through an authorized upload URL. A job advances through small,

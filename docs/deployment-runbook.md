@@ -47,7 +47,7 @@ Stated plainly, because it is the boundary everything else depends on
 
 | Surface | Where it runs | What it never does |
 | --- | --- | --- |
-| Web client (React/Vite SPA) | **Vercel** (Hobby/free tier): the static build of `packages/app`, contract in the repository-root `vercel.json` (ADR-0002 amended by issue #38) | Never holds `NAN_API_KEY`, `AGENT_BRIDGE_SECRET`, `JWT_PRIVATE_KEY`, `CONVEX_DEPLOYMENT` or any `*_SECRET`; no server code runs there |
+| Web client (React/Vite SPA) | **Vercel** (Hobby/free tier): the static build of `packages/app` — repository side in `vercel.json` (output directory + security headers), build pipeline and Node version in Vercel project settings (ADR-0002 amended by issue #38; section 13.1) | Never holds `NAN_API_KEY`, `AGENT_BRIDGE_SECRET`, `JWT_PRIVATE_KEY`, `CONVEX_DEPLOYMENT` or any `*_SECRET`; no server code runs there |
 | Durable data, auth, ingestion, HTTP actions | **Convex** (Free plan deployment) | Never auto-upgrades to a paid plan |
 | Learner agents (Agents SDK + SQLite Durable Objects) | **Cloudflare Workers Free** (`packages/agent`) | No frontend hosting, no Cloudflare Access gate, no Workers AI, no routes/custom domains, no paid plan |
 | Provider calls (NaN) | Server-side only: Convex actions/HTTP routes **and** the agent Worker | Never from the browser, never pooled across users |
@@ -84,7 +84,7 @@ copied between environments; each environment is set explicitly
 | Agent Worker | `pnpm --filter @learn-anything/agent dev` (`wrangler dev`) with `packages/agent/.dev.vars` | a staging Worker (separate name or separate account) deployed with `npx wrangler deploy` *(live)* | the production Worker `learn-anything-agent`, `npx wrangler deploy` *(live)* |
 | Worker variables/secrets | `.dev.vars` (gitignored) | `npx wrangler secret put <NAME>` + `--var`/config per environment *(live)* | same, on the production Worker *(live)* |
 | Frontend origin | `http://localhost:5173` (Vite dev) | a Vercel preview origin for that branch, e.g. `https://app-<deployment-id>-<team>.vercel.app` (per-deployment URLs are Vercel-auth-protected) | `https://app-dun-seven-88.vercel.app` (the production alias recorded in issue #38) |
-| Frontend build | `VITE_CONVEX_URL` / `VITE_CONVEX_SITE_URL` baked per environment at build time | same, staging/preview values (Vercel project environment variables, read by `buildCommand`) | same, production values |
+| Frontend build | `VITE_CONVEX_URL` / `VITE_CONVEX_SITE_URL` baked per environment at build time | same, staging/preview values (Vercel project environment variables, read by the project build `pnpm run build`) | same, production values |
 | Provider key | dev key or empty (offline tests never need it) | staging key (same deployer) | deployer's key, server-side only |
 | Plan | Convex Free, Cloudflare Workers Free | Convex Free, Cloudflare Workers Free | Convex Free, Cloudflare Workers Free |
 
@@ -620,18 +620,20 @@ pnpm lint && pnpm typecheck && pnpm test && pnpm build
 echo "OK: lint, typecheck, tests and build are green"
 
 # (7) Vercel frontend configuration shape (issue #38): parse vercel.json and
-#     assert the documented contract — framework/build/output, pinned Node
-#     line, the required header set, and no secret name anywhere in the file.
+#     assert the documented contract — output directory + security headers in
+#     the repo, the build pipeline (framework/install/build/Node) deliberately
+#     NOT overridden here (it lives in Vercel project settings), and no secret
+#     name anywhere in the file.
 node - <<'NODE'
 const fs = require("node:fs");
 const v = JSON.parse(fs.readFileSync("vercel.json", "utf8"));
 const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
 const fail = (m) => { console.error("FAIL: " + m); process.exit(1); };
-if (v.framework !== "vite") fail("framework must be vite");
-if (v.installCommand !== "pnpm install --frozen-lockfile") fail("installCommand mismatch");
-if (v.buildCommand !== "pnpm --filter @learn-anything/app build") fail("buildCommand mismatch");
-if (v.outputDirectory !== "packages/app/dist") fail("outputDirectory mismatch");
-if (!pkg.engines || pkg.engines.node !== "22.x") fail("engines.node must pin 22.x (CI runs Node 22.14.0)");
+for (const key of ["framework", "installCommand", "buildCommand", "devCommand", "redirects", "rewrites", "functions", "builds", "env"]) {
+  if (Object.hasOwn(v, key)) fail(key + " must stay in Vercel project settings (owner), not vercel.json");
+}
+if (v.outputDirectory !== "packages/app/dist") fail("outputDirectory must be packages/app/dist");
+if (!pkg.engines || pkg.engines.node !== ">=22") fail("engines.node is the workspace requirement (>=22); it does not select the Vercel build Node");
 const rule = (v.headers || []).find((h) => h.source === "/(.*)");
 if (!rule) fail("missing catch-all /(.*) header rule");
 const headers = Object.fromEntries(rule.headers.map((h) => [h.key, h.value]));
@@ -652,7 +654,7 @@ for (const d of ["default-src 'self'", "base-uri 'self'", "object-src 'none'", "
 if (/unsafe-(eval|inline)/.test(csp)) fail("CSP must not carry unsafe-eval/unsafe-inline");
 const secrets = ["NAN_API_KEY", "NAN_DEPLOYER_ID", "AGENT_BRIDGE_SECRET", "JWT_PRIVATE_KEY", "JWKS", "GITHUB_CLIENT_SECRET", "GOOGLE_CLIENT_SECRET", "CONVEX_DEPLOYMENT", "CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID", "CONVEX_DEPLOY_KEY"];
 for (const s of secrets) if (JSON.stringify(v).includes(s)) fail("secret name " + s + " appears in vercel.json");
-console.log("OK: vercel.json pins vite install/build/output + Node 22.x, required headers present, CSP strict, no secret name");
+console.log("OK: vercel.json sets outputDirectory + required headers only (build pipeline in project settings), CSP strict, no secret name");
 NODE
 ```
 
@@ -900,43 +902,52 @@ inserts a secret, activates production or contacts a provider.
 ## 13. Vercel web-client hosting (issue #38): configuration, headers, origins, rollback, free tier
 
 **Documentation and configuration only.** Checked 2026-10-03 against `main` @
-`d167217` with the pinned toolchain (`pnpm@10.20.0`, Node 22 line). Sources:
-the published `vercel.json` schema (`https://openapi.vercel.sh/vercel.json`,
-`additionalProperties: false`), Vercel's Node.js-version, limits and fair-use
-pages (linked in the README's *Verified documentation*). **No Vercel project
-was created or linked, no deployment was made, no dashboard setting was
+`d167217` with the pinned toolchain (`pnpm@10.20.0`, CI on Node 22.14.0).
+Sources: the published `vercel.json` schema
+(`https://openapi.vercel.sh/vercel.json`, `additionalProperties: false`),
+Vercel's Node.js-version, limits and fair-use pages (linked in the README's
+*Verified documentation*), and the build logs of the working production build
+plus this PR's first preview (owner-provided, read-only). **No Vercel project
+was created or linked, no deployment was triggered, no dashboard setting was
 changed, no secret was set and no provider was contacted for this issue** —
 the live steps are owner authority and are listed in section 13.8. The
 headers and config below take effect only on the next deployment that
 contains them.
 
-### 13.1 What the repository configures (`vercel.json` + Node pin)
+### 13.1 What the repository configures, and what stays in Vercel project settings
 
-| Key | Value in this repository | Why |
-| --- | --- | --- |
-| `$schema` | `https://openapi.vercel.sh/vercel.json` | Editor validation against the published schema |
-| `framework` | `vite` | Preset for the `packages/app` Vite SPA (ADR-0001) |
-| `installCommand` | `pnpm install --frozen-lockfile` | Same lockfile-locked install as CI |
-| `buildCommand` | `pnpm --filter @learn-anything/app build` | Workspace-aware build; `VITE_*` values are read here at build time |
-| `outputDirectory` | `packages/app/dist` | Vite's output for `packages/app` |
-| `headers` | one catch-all rule `source: /(.*)` with six response headers | Section 13.2; applies to HTML and hashed assets alike |
-| Root directory | repository root (no subdirectory Root Directory in project settings) | `vercel.json` lives at the repo root and drives the whole build |
+| Item | Where it lives | Value (observed 2026-10-03) | Why |
+| --- | --- | --- | --- |
+| `$schema` | `vercel.json` (repository) | `https://openapi.vercel.sh/vercel.json` | Editor validation against the published schema |
+| Output directory | `vercel.json` (repository), `outputDirectory` | `packages/app/dist` | Explicit and identical to what the project settings already produce |
+| Security headers | `vercel.json` (repository), `headers` | one catch-all `source: "/(.*)"` rule with six headers | Section 13.2; the security half of issue #38 |
+| Framework preset | Vercel project settings (owner) | as configured; the working build runs `pnpm run build` from the repository root | The dashboard already builds this monorepo correctly; overriding it in `vercel.json` is what broke the first preview (below) |
+| Install command | Vercel project settings (owner) | `pnpm install` (lockfile `pnpm-lock.yaml` at the repository root) | Same |
+| Build command | Vercel project settings (owner) | `pnpm run build` (workspace `pnpm -r build`, which includes `packages/app`) | `VITE_*` values are read by this build at build time |
+| Node version | Vercel project settings (owner) | **24.x** (build log: `node v24.21.0`) | The root `engines.node` (`>=22`; CI runs 22.14.0) is the workspace requirement only — verified ignored: a `22.x` engines pin did not change Vercel's Node |
+| Root directory | Vercel project settings (owner) | repository root (install/build ran from `/vercel/path0`) | No subdirectory Root Directory |
 
-- **Node version pin:** the published `vercel.json` schema has **no** Node
-  version key, so the pin lives where Vercel reads it: `engines.node` in the
-  root `package.json`, set to **`22.x`** (Vercel deploys the latest 22.x
-  available; CI runs Node 22.14.0 on the same major). The previous `>=22`
-  range would have resolved on Vercel to the newest available major instead,
-  silently diverging from CI — narrowing it to `22.x` is the pin. Re-verify
-  with `node -v` in the Build Command at the first deployment (Vercel doc:
-  *Supported Node.js versions*).
+**Why the build pipeline stays out of `vercel.json`:** this PR's first
+preview (deployment `dpl_A95fJQVVyUMjUHmiQBSHU8QuZdhs`, 2026-10-03) built
+successfully and then failed validation with `STATIC_BUILD_NO_OUT_DIR`
+("No Output Directory named \"dist\" found"): specifying `"framework": "vite"`
+in `vercel.json` made the framework preset's default `dist` win over the
+explicit `outputDirectory: packages/app/dist`. The fix removed `framework`,
+`installCommand` and `buildCommand` from `vercel.json` (asserted by section 7
+step (7)); the pipeline above is recorded from the working production build
+(`dpl_AAhAshApC77`, main `d167217`, no `vercel.json`). A Node version pin is
+**not** possible from this repository: the published schema has no Node key
+and `engines.node` is ignored by Vercel here — pinning the project Node
+version is an owner dashboard action (section 13.8).
+
 - **No rewrites/redirects:** routing is hash-based
   (`packages/app/src/router.ts` writes `window.location.hash`), so every deep
   link is `/#/...` on the origin path `/`; no SPA rewrite rule is needed and
   `vercel.json` defines none (each rule would also count against the
   2048-routes-per-deployment limit).
-- **No `devCommand`:** `vercel dev` falls back to the Vite framework default;
-  local development keeps using the Vite dev server directly.
+- **No `devCommand`/`framework` keys:** `vercel dev` and the framework
+  preset keep following the project settings; local development uses the Vite
+  dev server directly.
 
 ### 13.2 Security headers and microphone policy: required header → config line
 
@@ -959,8 +970,9 @@ frame-protection header; these entries are the fix. They are frontend-only
 controls — they say nothing about the Convex/Cloudflare surfaces, and they
 are inert until the next Vercel deployment (owner authority). Offline proof
 that the entries exist with the exact values is section 7 step (7) (`OK:
-vercel.json pins vite install/build/output + Node 22.x, required headers
-present, CSP strict, no secret name`). Live proof, after deployment *(live)*:
+vercel.json sets outputDirectory + required headers only (build pipeline in
+project settings), CSP strict, no secret name`). Live proof, after deployment
+*(live)*:
 
 ```sh
 curl -sI https://app-dun-seven-88.vercel.app/ \
@@ -1019,7 +1031,7 @@ Names only — values live where the third column says, never here:
 
 | Name | Class | Where it is set |
 | --- | --- | --- |
-| `VITE_CONVEX_URL` | public build coordinate | Vercel project environment (preview/production), read by `buildCommand` |
+| `VITE_CONVEX_URL` | public build coordinate | Vercel project environment (preview/production), read by the project build (`pnpm run build`) |
 | `VITE_CONVEX_SITE_URL` | public build coordinate (optional; derived from `VITE_CONVEX_URL` when empty) | same |
 | `SITE_URL`, `AUTH_REDIRECT_URIS` | exact-match allowlist (not secret) | Convex deployment variables, per environment (section 2.2, 13.5) |
 | `JWT_PRIVATE_KEY`, `JWKS` | **secret** | Convex deployment variables only, generated per deployment — owner secrets workflow |
@@ -1116,11 +1128,19 @@ these numbers on Vercel's limits/fair-use pages at deployment time.
    authorized secrets workflow. Issue QA shows sign-in currently fails with
    `Missing environment variable JWT_PRIVATE_KEY`; this is not fixable from
    the repository.
-2. **Deploying this configuration to Vercel:** linking/creating the Vercel
-   project, dashboard settings (root directory, Node version confirmation,
-   preview/production environment variables `VITE_CONVEX_URL` /
-   `VITE_CONVEX_SITE_URL` by name) and the deployment itself. The headers in
-   section 13.2 take effect only with that deployment.
+2. **Deploying this configuration to Vercel.** The Vercel Git integration
+   deploys this repository automatically; the owner verifies that the next
+   preview of this branch reaches READY — the first preview of this PR
+   (`dpl_A95fJQVVyUMjUHmiQBSHU8QuZdhs`) failed `STATIC_BUILD_NO_OUT_DIR`
+   because `framework: vite` in `vercel.json` beat the explicit
+   `outputDirectory` (forensics in section 13.1; the pipeline keys were
+   removed as the fix) — then deploys/promotes to production. Dashboard-only
+   settings stay owner authority: framework preset, install/build commands,
+   Root Directory and the **Node version pin** (project Node is 24.x;
+   `engines.node` is ignored by Vercel here). Preview/production environment
+   variables `VITE_CONVEX_URL` / `VITE_CONVEX_SITE_URL` are set by name in
+   the project settings. The headers in section 13.2 take effect only with
+   that deployment.
 3. **Preview/production smoke against the live URL:** sign-up/sign-in,
    `curl -I` header verification (section 13.2), and the no-secret-in-bundle
    grep against the deployed assets (section 13.4).
