@@ -1,0 +1,29 @@
+Synthetic long-form plain text fixture for the S10 chunking tests.
+
+Synthetic paragraph 01 explains spaced repetition with short daily reviews instead of long cramming sessions.
+
+Synthetic paragraph 02 describes how a learner schedules reviews across several days to move facts into long term memory.
+
+Synthetic paragraph 03 keeps a steady rhythm of sentences so that the window measurements stay predictable in tests.
+
+Synthetic paragraph 04 mentions that every sentence here is invented fixture data and never real course material.
+
+Synthetic paragraph 05 repeats the same shape with different numbers so paragraph boundaries are easy to tell apart.
+
+Synthetic paragraph 06 stresses the character count with a longer clause that pushes the text well past a single chunk.
+
+Synthetic paragraph 07 stays plain ASCII so the strict UTF-8 decoder and the content sniffer accept the file unchanged.
+
+Synthetic paragraph 08 is here to force the window step to walk several times before it reaches the end of the text.
+
+Synthetic paragraph 09 notes that overlap must be measured between consecutive chunks rather than assumed from code.
+
+Synthetic paragraph 10 keeps enough words around the boundary so a cut in the middle of a sentence is visible.
+
+Synthetic paragraph 11 asserts nothing on its own; the assertions live in the tests that read this fixture.
+
+Synthetic paragraph 12 pads the file so that a configured size of two hundred fifty six characters is crossed many times.
+
+Synthetic paragraph 13 finishes the numbered sequence while still reading like ordinary plain text content.
+
+Synthetic paragraph 14 closes the fixture with a final sentence that marks the end of the long input document.

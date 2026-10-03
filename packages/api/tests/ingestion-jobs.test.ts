@@ -95,7 +95,7 @@ test("a queued PDF job runs in the action, lands chunk rows and surfaces ready s
   expect(job).toMatchObject({ status: "succeeded", attempts: 1, chunkCount: 2 });
   expect(job.leaseOwner).toBeUndefined();
   expect(job.leaseExpiresAt).toBeUndefined();
-  expect(job.contentVersionKey).toMatch(/^[0-9a-f]{64}:v1$/);
+  expect(job.contentVersionKey).toMatch(/^[0-9a-f]{64}:v2$/);
 
   const ready = await a.query(api.documents.getDocument, { projectId, documentId: uploaded.documentId as never });
   expect(ready.status).toBe("ready");
@@ -344,7 +344,7 @@ test("job status is authenticated, owner-scoped and non-enumerating", async () =
 test("the HTTP upload path never imports or references the parser runner", () => {
   const directory = new URL("../convex/", import.meta.url);
   const source = readFileSync(new URL("http.ts", directory), "utf8");
-  expect(source).not.toMatch(/parseDocument|runIngestionCycle|contentVersionKeyFor|defaultProcessStep|@learn-anything\/worker/);
+  expect(source).not.toMatch(/parseDocument|runIngestionCycle|contentVersionKeyFor|sourceAwareProcessStep|@learn-anything\/worker/);
   const sources = readdirSync(directory).filter((name) => name.endsWith(".ts"));
   expect(sources).toContain("ingestion.ts");
   expect(sources).toContain("crons.ts");

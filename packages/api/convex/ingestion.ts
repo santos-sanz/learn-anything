@@ -1,9 +1,13 @@
 import {
+  CHUNK_SIZE_MAX,
+  CHUNK_SIZE_MIN,
+  DEFAULT_CHUNK_CONFIG,
+  MAX_DOCUMENT_CHUNKS,
   contentVersionKeyFor,
-  defaultProcessStep,
   isUnsupportedParserCode,
   parseDocument,
   parserErrorCode,
+  sourceAwareProcessStep,
 } from "@learn-anything/worker";
 import { ConvexError, v } from "convex/values";
 
@@ -37,7 +41,6 @@ const CLAIM_SCAN_LIMIT = 25;
 const LEASE_SWEEP_LIMIT = 10;
 const CYCLE_MAX_JOBS_DEFAULT = 5;
 const CYCLE_MAX_JOBS_LIMIT = 10;
-const MAX_CHUNKS = 2_000;
 const FAILURE_CODE_PATTERN = /^[A-Z][A-Z0-9_]{0,63}$/;
 const WORKER_ID_PATTERN = /^[A-Za-z0-9._-]{1,64}$/;
 
@@ -71,6 +74,20 @@ export function configuredLeaseMs(): number {
 
 export function configuredParseTimeoutMs(): number {
   return configuredInteger("INGESTION_PARSE_TIMEOUT_MS", PARSE_TIMEOUT_DEFAULT_MS, 100, 300_000);
+}
+
+/**
+ * S10 chunking configuration: validated here against the same bounds the
+ * worker enforces, then re-validated by `resolveChunkConfig` so an invalid
+ * combination (an overlap that would reach the size) still collapses to a
+ * well-formed configuration instead of a broken window step.
+ */
+export function configuredChunkSize(): number {
+  return configuredInteger("INGESTION_CHUNK_SIZE", DEFAULT_CHUNK_CONFIG.size, CHUNK_SIZE_MIN, CHUNK_SIZE_MAX);
+}
+
+export function configuredChunkOverlap(): number {
+  return configuredInteger("INGESTION_CHUNK_OVERLAP", DEFAULT_CHUNK_CONFIG.overlap, 0, CHUNK_SIZE_MAX);
 }
 
 /** Deterministic exponential backoff: base * 2^(attempts-1), capped. */
@@ -298,7 +315,7 @@ export const commitChunks = internalMutation({
     if (job.contentVersionKey !== undefined && job.contentVersionKey !== args.contentVersionKey) {
       throw new ConvexError({ code: "CONTENT_VERSION_CONFLICT" });
     }
-    if (args.chunks.length > MAX_CHUNKS) throw new ConvexError({ code: "CHUNKS_TOO_LARGE" });
+    if (args.chunks.length > MAX_DOCUMENT_CHUNKS) throw new ConvexError({ code: "CHUNKS_TOO_LARGE" });
     for (let index = 0; index < args.chunks.length; index += 1) {
       if (args.chunks[index].seq !== index) throw new ConvexError({ code: "INVALID_ARGUMENT" });
     }
@@ -310,8 +327,8 @@ export const commitChunks = internalMutation({
     const existing = await ctx.db
       .query("documentChunks")
       .withIndex("by_document", (q) => q.eq("documentId", args.documentId))
-      .take(MAX_CHUNKS + 1);
-    if (existing.length > MAX_CHUNKS) throw new ConvexError({ code: "CHUNKS_TOO_LARGE" });
+      .take(MAX_DOCUMENT_CHUNKS + 1);
+    if (existing.length > MAX_DOCUMENT_CHUNKS) throw new ConvexError({ code: "CHUNKS_TOO_LARGE" });
 
     const now = Date.now();
     const byKey = new Map(existing.map((chunk) => [chunk.chunkKey, chunk]));
@@ -482,7 +499,11 @@ async function executeClaim(ctx: ActionCtx, claim: Claim, workerId: string): Pro
       limits: { maxDurationMs: configuredParseTimeoutMs() },
     });
     const contentVersionKey = contentVersionKeyFor(bytes);
-    const chunks = defaultProcessStep({ document: parsed, contentVersionKey });
+    const chunks = sourceAwareProcessStep({
+      document: parsed,
+      contentVersionKey,
+      chunking: { size: configuredChunkSize(), overlap: configuredChunkOverlap() },
+    });
     if (chunks.length === 0) return markUnsupportedOutcome(ctx, claim, workerId, "NO_EXTRACTABLE_TEXT");
     await ctx.runMutation(internal.ingestion.commitChunks, {
       jobId: claim.jobId,

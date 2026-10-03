@@ -1,0 +1,19 @@
+%PDF-1.4
+1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj
+2 0 obj << /Type /Pages /Kids [3 0 R 4 0 R 5 0 R] /Count 3 >> endobj
+3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 6 0 R >> endobj
+4 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 7 0 R >> endobj
+5 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 8 0 R >> endobj
+6 0 obj << /Length 480 >> stream
+BT /F1 12 Tf 72 720 Td (PAGE ONE MARKER.) Tj 0 -16 Td (Synthetic page one introduces the chunk window and its measured overlap.) Tj 0 -16 Td (The second sentence keeps enough characters for several windows.) Tj 0 -16 Td (Window attribution must stay on the page where each chunk starts.) Tj 0 -16 Td (Continuation chunks repeat the configured overlap from the previous window.) Tj 0 -16 Td (Nothing on this page may appear in a page two locator.) Tj ET
+endstream endobj
+7 0 obj << /Length 240 >> stream
+BT /F1 12 Tf 72 720 Td (PAGE TWO MARKER.) Tj 0 -16 Td (Synthetic page two text belongs to its own locator region.) Tj 0 -16 Td (A chunk starting here cites page two and never page one.) Tj ET
+endstream endobj
+8 0 obj << /Length 160 >> stream
+BT /F1 12 Tf 72 720 Td (PAGE THREE MARKER.) Tj 0 -16 Td (Synthetic page three closes the fixture.) Tj ET
+endstream endobj
+trailer << /Root 1 0 R >>
+startxref
+0
+%%EOF
