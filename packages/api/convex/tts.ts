@@ -183,7 +183,10 @@ export const synthesizeSpeechRoute = httpAction(async (ctx, request) => {
 
   try {
     const audio = await client.speech(text, voice.voice, { signal: request.signal });
-    return new Response(new Blob([audio.slice()], { type: "audio/mpeg" }), {
+    // Raw bytes as the body: a jsdom Blob (any browser-like test runtime)
+    // cannot be consumed by the host Response implementation, while the
+    // Uint8Array body behaves identically in production and in tests.
+    return new Response(audio.slice(), {
       status: 200,
       headers: {
         ...cors,
