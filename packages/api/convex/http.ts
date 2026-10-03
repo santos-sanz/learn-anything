@@ -176,10 +176,11 @@ http.route({ path: "/private-uploads", method: "POST", handler: httpAction(async
     );
   } catch (error) {
     const code = rejectionCode(error);
+    const detail = error instanceof Error ? (error.stack ?? error.message) : String(error);
     if (code === "NOT_FOUND") return jsonResponse({ code: "NOT_FOUND" }, 404);
-    if (code === "QUOTA_EXCEEDED") return jsonResponse({ code: "QUOTA_EXCEEDED" }, 507);
-    if (code === "UPLOAD_FAILED") return jsonResponse({ code: "UPLOAD_FAILED" }, 500);
-    return jsonResponse({ code: "INTERNAL_ERROR" }, 500);
+    if (code === "QUOTA_EXCEEDED") return jsonResponse({ code: "QUOTA_EXCEEDED", detail }, 507);
+    if (code === "UPLOAD_FAILED") return jsonResponse({ code: "UPLOAD_FAILED", detail }, 500);
+    return jsonResponse({ code: "INTERNAL_ERROR", detail }, 500);
   }
 }) });
 

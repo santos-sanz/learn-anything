@@ -100,7 +100,9 @@ type UploadBody = { documentId: string; privateFileId: string; jobId: string };
 async function uploadFixture(t: TestInstance, subject: string, projectId: string, filename: string, key: string): Promise<UploadBody> {
   const contentType = filename.endsWith(".pdf") ? "application/pdf" : filename.endsWith(".md") ? "text/markdown" : "text/plain";
   const response = await t.withIdentity(identity(subject)).fetch(uploadPath(projectId, filename, key), post(fixture(filename), contentType));
-  expect(response.status).toBe(201);
+  if (response.status !== 201) {
+    throw new Error(`upload ${filename} answered ${response.status}: ${await response.text()}`);
+  }
   return (await response.json()) as UploadBody;
 }
 
