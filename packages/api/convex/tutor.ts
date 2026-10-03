@@ -33,6 +33,7 @@ import {
   type MutationCtx,
   type QueryCtx,
 } from "./_generated/server";
+import { insertTelemetryRow } from "./observability";
 import { languagePracticeConfigValidator } from "./languagePractice";
 import { requireOwnedProject, requireUserId } from "./projects";
 import { MAX_TURN_ID_CHARS } from "./stt";
@@ -184,6 +185,7 @@ const beginResultValidator = v.union(
   v.object({ state: v.literal("completed") }),
   v.object({ state: v.literal("cancelled") }),
   v.object({ state: v.literal("failed"), failureCode: v.union(v.null(), v.string()) }),
+  v.object({ state: v.literal("rate-limited") }),
 );
 
 type BeginResult =
@@ -191,7 +193,8 @@ type BeginResult =
   | { state: "in-progress" }
   | { state: "completed" }
   | { state: "cancelled" }
-  | { state: "failed"; failureCode: string | null };
+  | { state: "failed"; failureCode: string | null }
+  | { state: "rate-limited" };
 
 /** Bounded, validated deployment configuration; malformed values fall back, never propagate. */
 function configuredNumber(name: string, fallback: number, min: number, max: number): number {
@@ -212,6 +215,29 @@ export function tutorRetryBaseMs(): number {
 
 export function tutorMaxAttempts(): number {
   return configuredNumber("TUTOR_MAX_ATTEMPTS", 3, 1, 5);
+}
+
+/** S24 per-learner cap on simultaneously running turns; malformed values fall back. */
+export function maxConcurrentTurns(): number {
+  return configuredNumber("MAX_CONCURRENT_TURNS", 3, 1, 10);
+}
+
+/** Scan window for the cap: the cap itself plus slack for expired leases. */
+const CONCURRENCY_SCAN = 35;
+
+/**
+ * Counts one learner's live (unexpired) running turns across every project.
+ * Expired leases — crashed attempts that `beginTurn` would take over — never
+ * count, so a stale row cannot lock its owner out of the cap forever.
+ */
+async function liveRunningTurns(ctx: MutationCtx, ownerId: string, now: number): Promise<number> {
+  const rows = await ctx.db
+    .query("tutorTurns")
+    .withIndex("by_owner_status", (q) => q.eq("ownerId", ownerId).eq("status", "running"))
+    .take(CONCURRENCY_SCAN);
+  let live = 0;
+  for (const row of rows) if ((row.leaseExpiresAt ?? 0) > now) live += 1;
+  return live;
 }
 
 function tutorTimeoutMs(): number {
@@ -353,6 +379,7 @@ export const beginTurn = internalMutation({
     const now = Date.now();
     const existing = await loadTurn(ctx, args.ownerId, args.projectId, args.turnId);
     if (existing === null) {
+      if ((await liveRunningTurns(ctx, args.ownerId, now)) >= maxConcurrentTurns()) return { state: "rate-limited" };
       const token = attemptToken();
       await ctx.db.insert("tutorTurns", {
         ownerId: args.ownerId,
@@ -374,6 +401,7 @@ export const beginTurn = internalMutation({
     if (existing.status === "cancelled") return { state: "cancelled" };
     if (existing.status === "failed") return { state: "failed", failureCode: existing.failureCode ?? null };
     if ((existing.leaseExpiresAt ?? 0) > now) return { state: "in-progress" };
+    if ((await liveRunningTurns(ctx, args.ownerId, now)) >= maxConcurrentTurns()) return { state: "rate-limited" };
     const token = attemptToken();
     await ctx.db.patch(existing._id, {
       attempts: existing.attempts + 1,
@@ -449,11 +477,23 @@ export const failTurn = internalMutation({
     const turn = await loadTurn(ctx, args.ownerId, args.projectId, args.turnId);
     if (turn === null) return null;
     if (turn.status !== "running" || turn.attemptToken !== args.attemptToken) return null;
+    const failedAt = Date.now();
     await ctx.db.patch(turn._id, {
       status: "failed",
       failureCode: args.failureCode,
-      endedAt: Date.now(),
-      updatedAt: Date.now(),
+      endedAt: failedAt,
+      updatedAt: failedAt,
+    });
+    // S24: ids and timings only, in the same transaction as the failure.
+    await insertTelemetryRow(ctx, {
+      traceId: turn.turnId,
+      ownerId: args.ownerId,
+      projectId: args.projectId,
+      event: "tutor-turn",
+      status: "error",
+      code: args.failureCode,
+      durationMs: failedAt - turn.createdAt,
+      attempts: turn.attempts,
     });
     return null;
   },
@@ -653,6 +693,16 @@ export const commitTurn = internalMutation({
       endedAt: now,
       updatedAt: now,
     });
+    // S24: ids and timings only, in the same transaction as the commit.
+    await insertTelemetryRow(ctx, {
+      traceId: turn.turnId,
+      ownerId: args.ownerId,
+      projectId: args.projectId,
+      event: "tutor-turn",
+      status: "ok",
+      durationMs: now - turn.createdAt,
+      attempts: turn.attempts,
+    });
     const stored = await loadTurn(ctx, args.ownerId, args.projectId, turn.turnId);
     if (stored === null) throw turnError("TURN_INCOMPLETE");
     return await loadStoredResult(ctx, args.ownerId, args.projectId, stored, false);
@@ -687,6 +737,17 @@ export const cancelTurn = mutation({
     const now = Date.now();
     if (turn.status === "running") {
       await ctx.db.patch(turn._id, { status: "cancelled", endedAt: now, updatedAt: now });
+      // S24: ids and timings only, in the same transaction as the cancellation.
+      await insertTelemetryRow(ctx, {
+        traceId: turn.turnId,
+        ownerId,
+        projectId: args.projectId,
+        event: "tutor-turn",
+        status: "cancelled",
+        code: "TURN_CANCELLED",
+        durationMs: now - turn.createdAt,
+        attempts: turn.attempts,
+      });
       return { status: "cancelled" as const };
     }
     if (turn.status === "cancelled") return { status: "already-cancelled" as const };
@@ -982,9 +1043,11 @@ export const runTurn = action({
       const code =
         begin.state === "in-progress"
           ? "TURN_IN_PROGRESS"
-          : begin.state === "cancelled"
-            ? "TURN_CANCELLED"
-            : (begin.failureCode ?? "TURN_FAILED");
+          : begin.state === "rate-limited"
+            ? "TURN_CONCURRENCY_LIMIT"
+            : begin.state === "cancelled"
+              ? "TURN_CANCELLED"
+              : (begin.failureCode ?? "TURN_FAILED");
       throw turnError(code);
     }
     const token = begin.attemptToken;
@@ -1163,7 +1226,18 @@ export const runTurn = action({
             targetLanguage: languageConfig.targetLanguage,
           });
         } catch (error) {
-          console.error("[S19] practised-topic history write failed; returning the committed turn unchanged", error);
+          console.error(
+            "[S19] practised-topic history write failed; returning the committed turn unchanged",
+            // S24: a failure log carries a fixed token, never an error message
+            // (which could embed learner text) or a stack.
+            (() => {
+              const data: unknown = error instanceof ConvexError ? error.data : null;
+              const code = typeof data === "object" && data !== null && typeof (data as { code?: unknown }).code === "string"
+                ? (data as { code: string }).code
+                : "";
+              return /^[A-Z][A-Z0-9_]{0,63}$/.test(code) ? { code } : { code: "UNKNOWN" };
+            })(),
+          );
         }
       }
 
