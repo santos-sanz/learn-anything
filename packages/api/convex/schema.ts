@@ -28,12 +28,27 @@ export default defineSchema({
    * S21 adds optional `goal` and `mode` for onboarding/goal-mode selection.
    * Both are optional so v3 rows stay valid without a backfill; `mode` uses the
    * two learner-facing tracks only (S19/S20 implement the tutor behaviour).
+   *
+   * S19 adds optional `languagePractice` mode settings (target language, level,
+   * correction style, goals, roleplay scenarios). It is optional so an existing
+   * row stays valid and reads as unconfigured; `practisedTopics` (S19) records
+   * practice history below. All fields are learner settings, never scores:
+   * the table carries no proficiency, certification or pronunciation claims.
    */
   projects: defineTable({
     ownerId: v.string(),
     name: v.string(),
     goal: v.optional(v.string()),
     mode: v.optional(v.union(v.literal("language-practice"), v.literal("concept-learning"))),
+    languagePractice: v.optional(
+      v.object({
+        targetLanguage: v.union(v.literal("en"), v.literal("es")),
+        level: v.union(v.literal("beginner"), v.literal("intermediate"), v.literal("advanced")),
+        correctionStyle: v.union(v.literal("immediate"), v.literal("end-of-turn")),
+        goals: v.array(v.string()),
+        roleplayScenarios: v.array(v.string()),
+      }),
+    ),
     createdAt: v.number(),
     deletedAt: v.union(v.null(), v.number()),
   }).index("by_owner", ["ownerId"]),
@@ -102,7 +117,7 @@ export default defineSchema({
         reason: v.union(v.null(), v.string()),
       }),
     ),
-    answerBasis: v.optional(v.union(v.literal("document-backed"), v.literal("general-explanation"))),
+    answerBasis: v.optional(v.union(v.literal("document-backed"), v.literal("general-explanation"), v.literal("translation"))),
     failureCode: v.optional(v.string()),
     providerAttempts: v.optional(v.number()),
     unresolvedMarkers: v.optional(v.number()),
@@ -137,6 +152,29 @@ export default defineSchema({
   })
     .index("by_owner_project", ["ownerId", "projectId"])
     .index("by_message", ["messageId"])
+    .index("by_owner_project_turn", ["ownerId", "projectId", "turnId"]),
+  /**
+   * S19 practised-topic history for language-practice turns. One row per
+   * completed turn, keyed by (ownerId, projectId, turnId) so a replayed turn
+   * records exactly once. The row carries the practised topic plus the
+   * learner-selected settings at practice time - deliberately NO proficiency,
+   * certification, score, level-achieved or pronunciation fields: a text
+   * transcript cannot support any such claim, and none is recorded.
+   */
+  practisedTopics: defineTable({
+    ownerId: v.string(),
+    projectId: v.id("projects"),
+    sessionId: v.id("learningSessions"),
+    turnId: v.string(),
+    topic: v.string(),
+    // Typed at the storage layer, not just at the write arguments: only the
+    // S19 practice sets can ever enter history, so a garbage level or an
+    // unsupported target language is rejected by the schema itself.
+    level: v.union(v.literal("beginner"), v.literal("intermediate"), v.literal("advanced")),
+    targetLanguage: v.union(v.literal("en"), v.literal("es")),
+    createdAt: v.number(),
+  })
+    .index("by_owner_project", ["ownerId", "projectId"])
     .index("by_owner_project_turn", ["ownerId", "projectId", "turnId"]),
   /** Generic private storage ownership. S08 adds document metadata/ingestion separately. */
   privateFiles: defineTable({

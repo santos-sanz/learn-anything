@@ -4,10 +4,14 @@ import {
   TUTOR_CONTEXT_CHARS,
   TUTOR_MAX_ANSWER_CHARS,
   TUTOR_TOP_K,
+  buildLanguagePracticeSystemPrompt,
+  buildRouteTranslationPrompt,
   buildTutorSystemPrompt,
   buildTutorUserMessage,
   composeTutorAnswer,
+  detectTranslationRoute,
   extractCitationMarkers,
+  practisedTopicFor,
   runTutorTurn,
   TutorTurnError,
   tutorFailureFor,
@@ -29,6 +33,7 @@ import {
   type MutationCtx,
   type QueryCtx,
 } from "./_generated/server";
+import { languagePracticeConfigValidator } from "./languagePractice";
 import { requireOwnedProject, requireUserId } from "./projects";
 import { MAX_TURN_ID_CHARS } from "./stt";
 
@@ -49,15 +54,21 @@ import { MAX_TURN_ID_CHARS } from "./stt";
  *    linearization point for this `turnId`,
  * 5. provider client resolution (`TURN_NOT_CONFIGURED` when no key exists;
  *    no other provider is ever constructed),
- * 6. query embedding + S13 retrieval (project-scoped filter and recheck),
- * 7. `recordRetrieval` - freezes the retrieved chunk ids for this attempt,
- * 8. prompt build (system = goal/track/evidence mode only; everything
+ * 6. query embedding + S13 retrieval (project-scoped filter and recheck) -
+ *    skipped for an S19 translation-routed turn, which instead
+ *    `recordRetrieval`s an empty, explicitly-reasoned evidence set,
+ *  7. `recordRetrieval` - freezes the retrieved chunk ids for this attempt,
+ *  8. prompt build (system = goal/track/evidence mode only, plus the S19
+ *    language-practice section for a configured language-practice project or
+ *    the S18 translation task for a routed translation request; everything
  *    untrusted lives in the JSON user envelope),
- * 9. streamed completion with bounded, typed retries under the caller's
+ *  9. streamed completion with bounded, typed retries under the caller's
  *    abort signal, while a cancellation watcher polls the turn row,
- * 10. `commitTurn` - validates every citation against the frozen retrieval
+ *  10. `commitTurn` - validates every citation against the frozen retrieval
  *    set and the live owned chunk/document, then writes both messages and
- *    their citations together, or nothing at all.
+ *    their citations together, or nothing at all; a configured
+ *    language-practice tutor turn then records its practised topic
+ *    (idempotent per turn) through the S19 history mutation.
  *
  * ## Idempotency
  *
@@ -83,7 +94,9 @@ import { MAX_TURN_ID_CHARS } from "./stt";
  *
  * No external action tools, no autonomous agent, and no provider other than
  * NaN (`embeddings` for the query vector, `chat-streaming` for the answer,
- * optional `rerank` inside S13). Tutor modes (S19/S20) and the chat UI are
+ * optional `rerank` inside S13). S19 adds only the language-practice mode
+ * hook described above (prompt selection, S18 translation routing and
+ * practised-topic recording); concept-learning (S20) and the chat UI are
  * deliberately out of scope.
  */
 
@@ -102,14 +115,20 @@ const MAX_HISTORY_CHARS = 2_000;
 const MAX_HISTORY_ENTRY_CHARS = 600;
 
 type TurnStatus = "running" | "completed" | "cancelled" | "failed";
-type AnswerBasis = "document-backed" | "general-explanation";
+/** S19 adds `translation`: an explicit translation request answered by the S18 task. */
+type AnswerBasis = "document-backed" | "general-explanation" | "translation";
 
 const modeValidator = v.union(v.literal("language-practice"), v.literal("concept-learning"));
 const evidenceValidator = v.object({
   status: v.union(v.literal("ok"), v.literal("insufficient-evidence")),
   reason: v.union(v.null(), v.string()),
 });
-const answerBasisValidator = v.union(v.literal("document-backed"), v.literal("general-explanation"));
+const answerBasisValidator = v.union(
+  v.literal("document-backed"),
+  v.literal("general-explanation"),
+  v.literal("translation"),
+);
+const answerKindValidator = v.union(v.literal("tutor"), v.literal("translation"));
 
 const storedCitationValidator = v.object({
   rank: v.number(),
@@ -274,10 +293,14 @@ function attemptToken(): string {
 /** Ownership gate for the turn path: identity is server-derived, scope re-checked. */
 export const authorizeTurnScope = internalQuery({
   args: { ownerId: v.string(), projectId: v.id("projects") },
-  returns: v.object({ goal: v.union(v.null(), v.string()), mode: v.union(v.null(), modeValidator) }),
+  returns: v.object({
+    goal: v.union(v.null(), v.string()),
+    mode: v.union(v.null(), modeValidator),
+    languagePractice: v.union(v.null(), languagePracticeConfigValidator),
+  }),
   handler: async (ctx, args) => {
     const project = await requireOwnedProject(ctx, args.ownerId, args.projectId);
-    return { goal: project.goal ?? null, mode: project.mode ?? null };
+    return { goal: project.goal ?? null, mode: project.mode ?? null, languagePractice: project.languagePractice ?? null };
   },
 });
 
@@ -525,6 +548,7 @@ export const commitTurn = internalMutation({
     citations: v.array(v.object({ chunkId: v.id("documentChunks") })),
     providerAttempts: v.number(),
     unresolvedMarkers: v.number(),
+    answerKind: v.optional(answerKindValidator),
   },
   returns: turnResultValidator,
   handler: async (ctx, args): Promise<TurnResult> => {
@@ -576,7 +600,13 @@ export const commitTurn = internalMutation({
     }
 
     const evidenceMode: TutorEvidenceMode = turn.evidence?.status === "ok" ? "document-backed" : "no-evidence";
-    const answerBasis: AnswerBasis = evidenceMode === "document-backed" ? "document-backed" : "general-explanation";
+    // S19: a routed translation turn is stored verbatim (no no-evidence
+    // prefix - the answer is a translation, not a document claim) and is
+    // marked `translation` so it is never presented as a grounded answer.
+    const answerKind = args.answerKind ?? "tutor";
+    const answerBasis: AnswerBasis =
+      answerKind === "translation" ? "translation" : evidenceMode === "document-backed" ? "document-backed" : "general-explanation";
+    const storedAnswer = answerKind === "translation" ? answer : composeTutorAnswer(answer, evidenceMode);
     const now = Date.now();
     await ctx.db.insert("messages", {
       ownerId: args.ownerId,
@@ -595,7 +625,7 @@ export const commitTurn = internalMutation({
       turnId: turn.turnId,
       idempotencyKey: `${turn.turnId}:tutor`,
       role: "tutor",
-      content: composeTutorAnswer(answer, evidenceMode),
+      content: storedAnswer,
       createdAt: now,
     });
     for (let index = 0; index < verified.length; index += 1) {
@@ -889,6 +919,7 @@ export const runTurn = action({
     text: v.string(),
     sessionKey: v.optional(v.string()),
     rerank: v.optional(v.boolean()),
+    practisedTopic: v.optional(v.string()),
   },
   returns: turnResultValidator,
   handler: async (ctx: ActionCtx, args): Promise<TurnResult> => {
@@ -972,55 +1003,87 @@ export const runTurn = action({
     })();
 
     try {
-      const embedded = await client.embeddings([text], { signal: cancel.signal });
-      const retrieval = await ctx.runAction(api.retrieval.retrieveProjectContext, {
-        projectId: args.projectId,
-        query: text,
-        vector: embedded.vectors[0],
-        topK: TUTOR_TOP_K,
-        ...(args.rerank === undefined ? {} : { rerank: args.rerank }),
-        maxContextChars: TUTOR_CONTEXT_CHARS,
-      });
+      // S19 minimal mode hook. A configured language-practice project whose
+      // learner text is an explicit translation request is answered by the
+      // S18 translation task: retrieval and the tutor prompt are skipped for
+      // that turn (a translation cites nothing), and no silent language
+      // switch ever happens - anything that is not an explicit request stays
+      // a normal language-practice turn in the configured learning language.
+      const languageConfig = project.mode === "language-practice" ? project.languagePractice : null;
+      const translationRoute = languageConfig === null ? null : detectTranslationRoute(text, languageConfig);
 
-      const evidenceMode: TutorEvidenceMode = retrieval.status === "ok" ? "document-backed" : "no-evidence";
+      let evidenceMode: TutorEvidenceMode = "no-evidence";
       const evidenceList: TutorEvidence[] = [];
-      if (retrieval.status === "ok") {
-        const byChunkId = new Map(retrieval.citations.map((citation) => [citation.chunkId as string, citation]));
-        retrieval.context.segments.forEach((segment, index) => {
-          const citation = byChunkId.get(segment.chunkId as string);
-          evidenceList.push({
-            marker: index + 1,
-            documentId: segment.documentId as string,
-            chunkId: segment.chunkId as string,
-            seq: citation?.seq ?? index,
-            page: citation?.page ?? null,
-            heading: citation?.heading ?? null,
-            text: segment.text,
-          });
+      let system: string;
+      let user: string;
+      let answerKind: "tutor" | "translation" = "tutor";
+
+      if (translationRoute !== null) {
+        answerKind = "translation";
+        await ctx.runMutation(internal.tutor.recordRetrieval, {
+          ownerId,
+          projectId: args.projectId,
+          turnId,
+          attemptToken: token,
+          retrievedChunkIds: [],
+          evidence: { status: "insufficient-evidence", reason: "translation-request" },
         });
+        const routePrompt = buildRouteTranslationPrompt(translationRoute);
+        system = routePrompt.system;
+        user = routePrompt.user;
+      } else {
+        const embedded = await client.embeddings([text], { signal: cancel.signal });
+        const retrieval = await ctx.runAction(api.retrieval.retrieveProjectContext, {
+          projectId: args.projectId,
+          query: text,
+          vector: embedded.vectors[0],
+          topK: TUTOR_TOP_K,
+          ...(args.rerank === undefined ? {} : { rerank: args.rerank }),
+          maxContextChars: TUTOR_CONTEXT_CHARS,
+        });
+
+        evidenceMode = retrieval.status === "ok" ? "document-backed" : "no-evidence";
+        if (retrieval.status === "ok") {
+          const byChunkId = new Map(retrieval.citations.map((citation) => [citation.chunkId as string, citation]));
+          retrieval.context.segments.forEach((segment, index) => {
+            const citation = byChunkId.get(segment.chunkId as string);
+            evidenceList.push({
+              marker: index + 1,
+              documentId: segment.documentId as string,
+              chunkId: segment.chunkId as string,
+              seq: citation?.seq ?? index,
+              page: citation?.page ?? null,
+              heading: citation?.heading ?? null,
+              text: segment.text,
+            });
+          });
+        }
+
+        await ctx.runMutation(internal.tutor.recordRetrieval, {
+          ownerId,
+          projectId: args.projectId,
+          turnId,
+          attemptToken: token,
+          retrievedChunkIds: evidenceList.map((entry) => entry.chunkId as Id<"documentChunks">),
+          evidence: {
+            status: retrieval.status === "ok" ? "ok" : "insufficient-evidence",
+            reason: retrieval.status === "insufficient-evidence" ? retrieval.reason : null,
+          },
+        });
+
+        const history = await ctx.runQuery(internal.tutor.recentHistory, {
+          ownerId,
+          projectId: args.projectId,
+          sessionId,
+          turnId,
+        });
+
+        system =
+          languageConfig === null
+            ? buildTutorSystemPrompt({ goal: project.goal, mode: project.mode, evidenceMode })
+            : buildLanguagePracticeSystemPrompt({ goal: project.goal, evidenceMode, languagePractice: languageConfig });
+        user = buildTutorUserMessage({ learnerText: text, history, evidence: evidenceList });
       }
-
-      await ctx.runMutation(internal.tutor.recordRetrieval, {
-        ownerId,
-        projectId: args.projectId,
-        turnId,
-        attemptToken: token,
-        retrievedChunkIds: evidenceList.map((entry) => entry.chunkId as Id<"documentChunks">),
-        evidence: {
-          status: retrieval.status === "ok" ? "ok" : "insufficient-evidence",
-          reason: retrieval.status === "insufficient-evidence" ? retrieval.reason : null,
-        },
-      });
-
-      const history = await ctx.runQuery(internal.tutor.recentHistory, {
-        ownerId,
-        projectId: args.projectId,
-        sessionId,
-        turnId,
-      });
-
-      const system = buildTutorSystemPrompt({ goal: project.goal, mode: project.mode, evidenceMode });
-      const user = buildTutorUserMessage({ learnerText: text, history, evidence: evidenceList });
 
       const completion = await runTutorTurn(
         client,
@@ -1038,7 +1101,7 @@ export const runTurn = action({
       sleeper.wake?.();
       await watcher;
 
-      return await ctx.runMutation(internal.tutor.commitTurn, {
+      const committed = await ctx.runMutation(internal.tutor.commitTurn, {
         ownerId,
         projectId: args.projectId,
         turnId,
@@ -1047,7 +1110,34 @@ export const runTurn = action({
         citations,
         providerAttempts: completion.attempts,
         unresolvedMarkers: markers.length - resolved.length,
+        answerKind,
       });
+
+      // S19 practice history: recorded only for a configured language-practice
+      // tutor turn (a routed translation is not a practised topic). The write
+      // is idempotent per turnId, so a replayed commit never duplicates it;
+      // it runs strictly after the committed result and is deliberately
+      // non-fatal: a history failure is logged and swallowed so it can never
+      // roll back, mask or fail an already-committed turn. Authorization
+      // inside `recordPractisedTopic` (owner and session re-check) is
+      // unchanged - a rejected write simply records nothing.
+      if (languageConfig !== null && translationRoute === null) {
+        try {
+          await ctx.runMutation(internal.languagePractice.recordPractisedTopic, {
+            ownerId,
+            projectId: args.projectId,
+            sessionId,
+            turnId,
+            topic: practisedTopicFor(text, args.practisedTopic),
+            level: languageConfig.level,
+            targetLanguage: languageConfig.targetLanguage,
+          });
+        } catch (error) {
+          console.error("[S19] practised-topic history write failed; returning the committed turn unchanged", error);
+        }
+      }
+
+      return committed;
     } catch (error) {
       const failure = turnFailureCode(error);
       if (failure.code !== "TURN_CANCELLED") {

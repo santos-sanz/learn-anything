@@ -33,13 +33,16 @@ export const checkCompatibility = internalQuery({
 const BACKFILL_BATCH = 100;
 
 /**
- * S22 resumable marker migration for schema/function version 9: the optional
- * `documents.deletedAt` deletion tombstone and the `documentChunks`
- * `by_document_seq` index (both additive; S14's version 8 added the
- * `tutorTurns`/`citations` tables this supersedes). No column backfill exists,
- * so the migration is the marker write that adopts any older deployment in
- * place — the same replace-the-marker step S12 took for version 7, which it
- * supersedes while keeping that migration's idempotent `nextAttemptAt`
+ * Resumable marker migration for schema/function version 10, which unions the
+ * two scopes that each shipped as a version 9 marker on their own branch:
+ * S22 document management (the optional `documents.deletedAt` deletion
+ * tombstone and the `documentChunks.by_document_seq` index) and S19 language
+ * practice (the optional `projects.languagePractice` settings, the third
+ * `tutorTurns.answerBasis` `translation` member and the empty `practisedTopics`
+ * table). Every addition is optional/empty-start, so an earlier row validates
+ * unchanged with no backfill — the migration is the marker write that adopts
+ * any older deployment in place, superseding the `bootstrap-schema-v9` and
+ * `bootstrap-schema-v8` markers while keeping their idempotent `nextAttemptAt`
  * backfill so a pre-v6 deployment is not skipped. Each call performs one
  * bounded batch (indexed by `documentId`) that backfills `nextAttemptAt` on
  * S08-era rows so they enter `by_status_next`, then records the cursor; a retry
@@ -48,7 +51,7 @@ const BACKFILL_BATCH = 100;
  * changes nothing twice. `maxAttempts` stays optional and is resolved at read
  * time, so no backfill depends on deployment configuration.
  */
-export const bootstrapSchemaV9 = internalMutation({
+export const bootstrapSchemaV10 = internalMutation({
   args: {},
   returns: migrationResult,
   handler: async (ctx) => {
