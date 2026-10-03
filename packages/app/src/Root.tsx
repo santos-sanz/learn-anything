@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { deriveAuthView, mapAuthError } from "./authView.js";
 import { ProjectsProvider } from "./data/ProjectsProvider.js";
 import type { ProjectsBackend } from "./data/projects.js";
+import type { TutorBackend } from "./data/tutor.js";
 import { Dashboard } from "./screens/Dashboard.js";
 import { NewProject } from "./screens/NewProject.js";
 import { ProjectDetail } from "./screens/ProjectDetail.js";
@@ -21,7 +22,17 @@ export type AuthSession = {
   signOut: () => Promise<void>;
 };
 
-function Shell({ busy, error, onSignOut }: { busy: boolean; error: string | null; onSignOut: () => void | Promise<void> }) {
+function Shell({
+  busy,
+  error,
+  tutor,
+  onSignOut,
+}: {
+  busy: boolean;
+  error: string | null;
+  tutor?: TutorBackend | undefined;
+  onSignOut: () => void | Promise<void>;
+}) {
   const route = useHashRoute();
   const routeKey = serializeRoute(route);
   const mainRef = useRef<HTMLElement>(null);
@@ -57,7 +68,7 @@ function Shell({ busy, error, onSignOut }: { busy: boolean; error: string | null
       <main className="app-main" id="main" ref={mainRef} tabIndex={-1}>
         {route.name === "dashboard" && <Dashboard />}
         {route.name === "new-project" && <NewProject />}
-        {route.name === "project" && <ProjectDetail id={route.id} key={route.id} />}
+        {route.name === "project" && <ProjectDetail id={route.id} key={route.id} tutor={tutor} />}
       </main>
     </div>
   );
@@ -68,7 +79,7 @@ function Shell({ busy, error, onSignOut }: { busy: boolean; error: string | null
  * dashboard (they get the sign-in view, with any deep link left intact for
  * after sign-in), and sign-out revokes before the session state flips.
  */
-export function Root({ session, backend }: { session: AuthSession; backend: ProjectsBackend }) {
+export function Root({ session, backend, tutor }: { session: AuthSession; backend: ProjectsBackend; tutor?: TutorBackend }) {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const view = deriveAuthView(session);
@@ -111,7 +122,7 @@ export function Root({ session, backend }: { session: AuthSession; backend: Proj
 
   return (
     <ProjectsProvider backend={backend}>
-      <Shell busy={busy} error={error} onSignOut={handleSignOut} />
+      <Shell busy={busy} error={error} tutor={tutor} onSignOut={handleSignOut} />
     </ProjectsProvider>
   );
 }

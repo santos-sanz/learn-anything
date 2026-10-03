@@ -4,6 +4,7 @@ import { useConvex, useMutation } from "convex/react";
 import { useMemo } from "react";
 
 import { makeConvexProjectsBackend } from "./data/projects.js";
+import { makeConvexTutorBackend } from "./data/tutor.js";
 import { Root, type AuthSession } from "./Root.js";
 import type { SignInSubmission } from "./SignInForm.js";
 
@@ -18,6 +19,7 @@ export function App() {
   const revokeConnectionTokens = useMutation(api.agentSessions.revokeAllConnectionTokens);
   const convex = useConvex();
   const backend = useMemo(() => makeConvexProjectsBackend(convex), [convex]);
+  const tutor = useMemo(() => makeConvexTutorBackend(convex), [convex]);
 
   const session = useMemo<AuthSession>(
     () => ({
@@ -36,5 +38,5 @@ export function App() {
     [isLoading, isAuthenticated, signIn, signOut, revokeConnectionTokens],
   );
 
-  return <Root session={session} backend={backend} />;
+  return <Root session={session} backend={backend} tutor={tutor} />;
 }

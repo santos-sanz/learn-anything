@@ -23,6 +23,7 @@ import type * as redirects from "../redirects.js";
 import type * as retrieval from "../retrieval.js";
 import type * as stt from "../stt.js";
 import type * as translation from "../translation.js";
+import type * as tts from "../tts.js";
 import type * as tutor from "../tutor.js";
 import type * as version from "../version.js";
 
@@ -48,6 +49,7 @@ declare const fullApi: ApiFromModules<{
   retrieval: typeof retrieval;
   stt: typeof stt;
   translation: typeof translation;
+  tts: typeof tts;
   tutor: typeof tutor;
   version: typeof version;
 }>;

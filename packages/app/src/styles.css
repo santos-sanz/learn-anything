@@ -408,6 +408,53 @@ a {
   margin-top: 1rem;
 }
 
+/* Tutor response player (S16) */
+
+.tutor-response {
+  margin-top: 1.5rem;
+}
+
+.response-player {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 1rem;
+  background: var(--surface-sunken);
+  max-width: 44rem;
+}
+
+.player-transcript {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.player-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.response-player select {
+  font: inherit;
+  min-height: 2.75rem;
+  margin-left: 0.5rem;
+  padding: 0.35rem 0.5rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--ink);
+}
+
+.turn-running {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.turn-running .button {
+  margin-left: 0;
+}
+
 /* Responsive */
 
 @media (min-width: 40rem) {

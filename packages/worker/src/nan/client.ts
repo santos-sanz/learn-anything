@@ -1,4 +1,5 @@
 import { assertNanProviderPolicy, type NanDeploymentContext } from "./policy.js";
+import { KOKORO_VOICES } from "./speech.js";
 import {
   assertTranslationSourceSize,
   buildTranslationPrompt,
@@ -148,9 +149,15 @@ export class NanClient {
     return { text: result.text, language: "en" };
   }
 
+  /**
+   * Kokoro MP3 synthesis for the S16 speech stage. The voice must be one of
+   * the configured voices (`speech.ts`), so an unknown voice is a typed
+   * `NAN_UNSUPPORTED_CAPABILITY` instead of a silent default, and no other
+   * provider is ever substituted for this capability.
+   */
   async speech(input: string, voice: NanVoice = nanVoices.english, options: NanFetchOptions = {}): Promise<Uint8Array> {
     this.assertInput(input);
-    if (!Object.values(nanVoices).includes(voice)) throw new NanAdapterError("NAN_UNSUPPORTED_CAPABILITY", `Unsupported Kokoro voice: ${voice}`);
+    if (!KOKORO_VOICES.some((configured) => configured.id === voice)) throw new NanAdapterError("NAN_UNSUPPORTED_CAPABILITY", `Unsupported Kokoro voice: ${voice}`);
     const response = await this.request("speech", "/audio/speech", {
       method: "POST", body: JSON.stringify({ model: nanModels.speech, input, voice, response_format: "mp3", speed: 1 }),
     }, options);
