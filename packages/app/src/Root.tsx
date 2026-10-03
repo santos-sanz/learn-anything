@@ -1,12 +1,15 @@
 import { useEffect, useRef, useState } from "react";
 
 import { deriveAuthView, mapAuthError } from "./authView.js";
+import type { DocumentsBackend } from "./data/documents.js";
 import { ProjectsProvider } from "./data/ProjectsProvider.js";
 import type { ProjectsBackend } from "./data/projects.js";
 import type { TutorBackend } from "./data/tutor.js";
 import { Dashboard } from "./screens/Dashboard.js";
+import { DocumentsScreen } from "./screens/DocumentsScreen.js";
 import { NewProject } from "./screens/NewProject.js";
 import { ProjectDetail } from "./screens/ProjectDetail.js";
+import { SourceViewerScreen } from "./screens/SourceViewerScreen.js";
 import { serializeRoute, useHashRoute } from "./router.js";
 import { SignInForm, type SignInSubmission } from "./SignInForm.js";
 
@@ -26,11 +29,13 @@ function Shell({
   busy,
   error,
   tutor,
+  documents,
   onSignOut,
 }: {
   busy: boolean;
   error: string | null;
   tutor?: TutorBackend | undefined;
+  documents?: DocumentsBackend | null | undefined;
   onSignOut: () => void | Promise<void>;
 }) {
   const route = useHashRoute();
@@ -69,6 +74,10 @@ function Shell({
         {route.name === "dashboard" && <Dashboard />}
         {route.name === "new-project" && <NewProject />}
         {route.name === "project" && <ProjectDetail id={route.id} key={route.id} tutor={tutor} />}
+        {route.name === "documents" && <DocumentsScreen key={route.projectId} projectId={route.projectId} backend={documents} />}
+        {route.name === "source" && (
+          <SourceViewerScreen key={`${route.documentId}:${route.chunkId ?? ""}`} projectId={route.projectId} documentId={route.documentId} chunkId={route.chunkId} contentHash={route.contentHash} backend={documents} />
+        )}
       </main>
     </div>
   );
@@ -79,7 +88,17 @@ function Shell({
  * dashboard (they get the sign-in view, with any deep link left intact for
  * after sign-in), and sign-out revokes before the session state flips.
  */
-export function Root({ session, backend, tutor }: { session: AuthSession; backend: ProjectsBackend; tutor?: TutorBackend }) {
+export function Root({
+  session,
+  backend,
+  tutor,
+  documents,
+}: {
+  session: AuthSession;
+  backend: ProjectsBackend;
+  tutor?: TutorBackend;
+  documents?: DocumentsBackend | null | undefined;
+}) {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const view = deriveAuthView(session);
@@ -122,7 +141,7 @@ export function Root({ session, backend, tutor }: { session: AuthSession; backen
 
   return (
     <ProjectsProvider backend={backend}>
-      <Shell busy={busy} error={error} tutor={tutor} onSignOut={handleSignOut} />
+      <Shell busy={busy} error={error} tutor={tutor} documents={documents} onSignOut={handleSignOut} />
     </ProjectsProvider>
   );
 }

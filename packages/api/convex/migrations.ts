@@ -33,9 +33,11 @@ export const checkCompatibility = internalQuery({
 const BACKFILL_BATCH = 100;
 
 /**
- * S14 resumable marker migration for schema/function version 8: the
- * `tutorTurns` and `citations` tables (both start empty, so no column backfill
- * exists). The migration is a marker write that adopts any older deployment in
+ * S22 resumable marker migration for schema/function version 9: the optional
+ * `documents.deletedAt` deletion tombstone and the `documentChunks`
+ * `by_document_seq` index (both additive; S14's version 8 added the
+ * `tutorTurns`/`citations` tables this supersedes). No column backfill exists,
+ * so the migration is the marker write that adopts any older deployment in
  * place — the same replace-the-marker step S12 took for version 7, which it
  * supersedes while keeping that migration's idempotent `nextAttemptAt`
  * backfill so a pre-v6 deployment is not skipped. Each call performs one
@@ -46,7 +48,7 @@ const BACKFILL_BATCH = 100;
  * changes nothing twice. `maxAttempts` stays optional and is resolved at read
  * time, so no backfill depends on deployment configuration.
  */
-export const bootstrapSchemaV8 = internalMutation({
+export const bootstrapSchemaV9 = internalMutation({
   args: {},
   returns: migrationResult,
   handler: async (ctx) => {
