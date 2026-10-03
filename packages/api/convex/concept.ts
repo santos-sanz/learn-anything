@@ -31,7 +31,6 @@ import {
 } from "./_generated/server";
 import { requireOwnedProject, requireUserId } from "./projects";
 import {
-  answerBasisValidator,
   evidenceValidator,
   requireLearnerText,
   requireTurnId,
@@ -43,6 +42,7 @@ import {
   tutorMaxAttempts,
   tutorRetryBaseMs,
   TURN_LEASE_MS,
+  type AnswerBasis,
 } from "./tutor";
 
 /**
@@ -115,6 +115,12 @@ const outcomeValidator = v.union(
 );
 const feedbackValueValidator = v.union(v.literal("helpful"), v.literal("not-helpful"));
 const evidenceStatusValidator = v.union(v.literal("ok"), v.literal("insufficient-evidence"));
+/**
+ * The concept surface reports only the two bases a concept reply can have.
+ * The shared tutor `answerBasisValidator` is wider (S19 added `translation`),
+ * which `conceptAnswerBasis` below narrows before anything is written.
+ */
+const conceptAnswerBasisValidator = v.union(v.literal("document-backed"), v.literal("general-explanation"));
 const referenceValidator = v.object({
   chunkId: v.id("documentChunks"),
   documentId: v.id("documents"),
@@ -137,7 +143,7 @@ const activityResultValidator = v.object({
   status: v.literal("completed"),
   activity: activityValidator,
   outcome: outcomeValidator,
-  answerBasis: answerBasisValidator,
+  answerBasis: conceptAnswerBasisValidator,
   text: v.string(),
   citations: v.array(storedCitationValidator),
   evidence: evidenceValidator,
@@ -153,7 +159,7 @@ type ActivityResult = {
   status: "completed";
   activity: ConceptActivity;
   outcome: ActivityOutcome;
-  answerBasis: "document-backed" | "general-explanation";
+  answerBasis: ConceptAnswerBasis;
   text: string;
   citations: Array<{
     rank: number;
@@ -193,6 +199,32 @@ function conceptError(code: string): ConvexError<{ code: string }> {
   return new ConvexError({ code });
 }
 
+/** The two grounding bases a concept activity result may report. */
+type ConceptAnswerBasis = "document-backed" | "general-explanation";
+
+/**
+ * Narrows the shared tutor `AnswerBasis` to the concept result surface.
+ *
+ * S19 widened `AnswerBasis` with `translation` for language-practice turns.
+ * `runActivity` never writes that basis itself — its `commitTurn` call passes
+ * no `answerKind`, so the orchestrator resolves `document-backed` or
+ * `general-explanation` from the retrieved evidence — but the shared turn
+ * store can hold an S19 translation turn under a replayed `turnId` (or hand
+ * one back from `commitTurn`'s completed-turn fast path). The concept result
+ * has no member for it, so such a turn is rejected with a typed
+ * `TURN_NOT_ACTIVITY` instead of being relabelled as a concept basis or cast
+ * away: no activity event is recorded for a turn this action did not run.
+ */
+function conceptAnswerBasis(basis: AnswerBasis): ConceptAnswerBasis {
+  switch (basis) {
+    case "document-backed":
+    case "general-explanation":
+      return basis;
+    case "translation":
+      throw conceptError("TURN_NOT_ACTIVITY");
+  }
+}
+
 type TurnFailure = { code: string; retryAfterMs?: number };
 
 /** Recovers a typed `{ code }` from an error raised by another Convex function. */
@@ -215,6 +247,26 @@ function turnFailureCode(error: unknown): TurnFailure {
   return { code: failure.code, ...(failure.retryAfterMs === undefined ? {} : { retryAfterMs: failure.retryAfterMs }) };
 }
 
+/**
+ * How many of the newest feedback rows are examined for one target. Documented
+ * bound: `recordFeedback` refuses to insert while an active row exists, so at
+ * most one active row exists per target and it is always the newest
+ * `feedback-given` row — the window only has to be non-empty to find it.
+ */
+const FEEDBACK_SCAN_LIMIT = 50;
+
+/**
+ * The active (not yet retracted) feedback row for one activity target, or
+ * `null`.
+ *
+ * The scan is deterministic: every candidate shares the same
+ * `by_owner_project_target` key (`ownerId`, `projectId`, `targetEventId`), so
+ * Convex breaks the tie by `_id`; `.order("desc")` therefore walks the window
+ * newest-first (`_id` descending, matching insertion order), and the bound
+ * above documents exactly how many rows that window covers. A `feedback-retracted`
+ * event never appears here — it points at the feedback row it reverses, not at
+ * the activity target — so every row in the window is a `feedback-given` row.
+ */
 async function activeFeedbackEvent(
   ctx: QueryCtx | MutationCtx,
   ownerId: string,
@@ -226,7 +278,8 @@ async function activeFeedbackEvent(
     .withIndex("by_owner_project_target", (q) =>
       q.eq("ownerId", ownerId).eq("projectId", projectId).eq("targetEventId", targetEventId),
     )
-    .take(MAX_EVENT_REFERENCES);
+    .order("desc")
+    .take(FEEDBACK_SCAN_LIMIT);
   return (
     rows.find((row) => row.eventType === "feedback-given" && row.retractedAt === undefined) ?? null
   );
@@ -563,6 +616,9 @@ export const runActivity = action({
         turnId,
       });
       if (replay === null) throw conceptError("TURN_INCOMPLETE");
+      // Narrowed before any write: an S19 translation turn replayed under this
+      // turnId has no activity result, so it must not record an event either.
+      const answerBasis = conceptAnswerBasis(replay.answerBasis);
       const outcome = resolveActivityOutcome(args.activity, replay.text);
       const progress = await ctx.runMutation(internal.concept.recordActivityEvent, {
         ownerId,
@@ -582,7 +638,7 @@ export const runActivity = action({
         })),
         idempotencyKey: `${turnId}:activity-completed`,
       });
-      return { ...replay, activity: args.activity, outcome, progressEventId: progress.eventId };
+      return { ...replay, activity: args.activity, outcome, answerBasis, progressEventId: progress.eventId };
     }
     if (begin.state !== "started") {
       const code =
@@ -752,7 +808,7 @@ export const runActivity = action({
         status: "completed",
         activity: args.activity,
         outcome,
-        answerBasis: committed.answerBasis,
+        answerBasis: conceptAnswerBasis(committed.answerBasis),
         text: committed.text,
         citations: committed.citations,
         evidence: committed.evidence,

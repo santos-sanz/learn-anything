@@ -456,7 +456,7 @@ test("(2) the explain activity is grounded in project documents and records one 
  * (3) question-first (Socratic) behaviour
  * ------------------------------------------------------------------ */
 
-test("(3) socratic questioning is question-first and a lecture-only reply never reaches the transcript", async () => {
+test("(3) asking activities are question-first and a lecture-only reply never reaches the transcript", async () => {
   const t = makeTest();
   const project = await seededSelectedProject(t);
 
@@ -501,6 +501,25 @@ test("(3) socratic questioning is question-first and a lecture-only reply never 
   });
   expect(failed).toMatchObject({ status: "failed", failureCode: "ACTIVITY_NOT_QUESTION_FIRST" });
 
+  // The other question-first activities reject the same lecture-only reply
+  // (no verdict, no question) and store nothing either.
+  for (const activity of ["teach-back", "quiz"] as const) {
+    const rejectedTurnId = `turn-lecture-${activity}`;
+    await expect(
+      runActivity(t, "learner-a", {
+        projectId: project.projectId,
+        turnId: rejectedTurnId,
+        activity,
+        text: "Explain photosynthesis now",
+      }),
+    ).rejects.toThrow("ACTIVITY_NOT_QUESTION_FIRST");
+    const rejected = await queryAs<{ status: string; failureCode: string } | null>(t, "learner-a", api.tutor.getTurn, {
+      projectId: project.projectId,
+      turnId: rejectedTurnId,
+    });
+    expect(rejected).toMatchObject({ status: "failed", failureCode: "ACTIVITY_NOT_QUESTION_FIRST" });
+  }
+
   const messages = await allRows<{ turnId: string; role: string; content: string }>(t, "messages");
   expect(messages).toHaveLength(2);
   expect(messages.every((message) => message.turnId === "turn-ask")).toBe(true);
@@ -508,7 +527,62 @@ test("(3) socratic questioning is question-first and a lecture-only reply never 
   const events = await allRows<EventRow>(t, "progressEvents");
   expect(events).toHaveLength(1);
   expect(events[0].turnId).toBe("turn-ask");
-  expect(chatCalls).toHaveLength(2);
+  // One provider reply per rejected turn plus the stored question-first turn.
+  expect(chatCalls).toHaveLength(4);
+});
+
+test("replaying a non-activity (S19 translation) turn never records a concept activity", async () => {
+  const t = makeTest();
+  const project = await seededSelectedProject(t);
+
+  // The shared turn store can hold a completed S19 translation turn under the
+  // same (ownerId, projectId, turnId) namespace a concept activity replays in.
+  await t.run(async (ctx) => {
+    const sessionId = await ctx.db.insert("learningSessions", {
+      ownerId: "learner-a",
+      projectId: project.projectId as never,
+      sessionKey: "translation",
+      createdAt: 1,
+      endedAt: null,
+    });
+    await ctx.db.insert("tutorTurns", {
+      ownerId: "learner-a",
+      projectId: project.projectId as never,
+      sessionId,
+      turnId: "turn-translation",
+      status: "completed",
+      attempts: 1,
+      learnerText: "Translate this sentence",
+      retrievedChunkIds: [],
+      answerBasis: "translation",
+      createdAt: 1,
+      updatedAt: 1,
+    });
+    await ctx.db.insert("messages", {
+      ownerId: "learner-a",
+      projectId: project.projectId as never,
+      sessionId,
+      turnId: "turn-translation",
+      idempotencyKey: "turn-translation:tutor",
+      role: "tutor",
+      content: "Translated text with no activity result.",
+      createdAt: 1,
+    });
+  });
+
+  await expect(
+    runActivity(t, "learner-a", {
+      projectId: project.projectId,
+      turnId: "turn-translation",
+      activity: "explain",
+      text: "Explain how plants store energy",
+    }),
+  ).rejects.toThrow("TURN_NOT_ACTIVITY");
+
+  // The translation turn is not relabelled: no event, no provider call, no write.
+  expect(await allRows<EventRow>(t, "progressEvents")).toHaveLength(0);
+  expect(await allRows<{ turnId: string }>(t, "messages")).toHaveLength(1);
+  expect(chatCalls).toHaveLength(0);
 });
 
 /* ------------------------------------------------------------------ *

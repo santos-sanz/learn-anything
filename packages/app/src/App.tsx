@@ -6,6 +6,7 @@ import { useMemo } from "react";
 import { resolveConvexSiteUrl } from "./audioCapture.js";
 import { makeConvexDocumentsBackend } from "./data/documents.js";
 import { makeConvexProjectsBackend } from "./data/projects.js";
+import { makeConvexTutorBackend } from "./data/tutor.js";
 import { Root, type AuthSession } from "./Root.js";
 import type { SignInSubmission } from "./SignInForm.js";
 
@@ -21,6 +22,7 @@ export function App() {
   const convex = useConvex();
   const authToken = useAuthToken();
   const backend = useMemo(() => makeConvexProjectsBackend(convex), [convex]);
+  const tutor = useMemo(() => makeConvexTutorBackend(convex), [convex]);
   const documentsBackend = useMemo(
     () =>
       makeConvexDocumentsBackend(convex, {
@@ -47,5 +49,5 @@ export function App() {
     [isLoading, isAuthenticated, signIn, signOut, revokeConnectionTokens],
   );
 
-  return <Root session={session} backend={backend} documents={documentsBackend} />;
+  return <Root session={session} backend={backend} tutor={tutor} documents={documentsBackend} />;
 }

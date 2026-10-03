@@ -17,6 +17,7 @@ import { httpAction } from "./_generated/server";
 import { requireUserId } from "./projects";
 import { transcribeTurnRoute } from "./stt";
 import { translateAudioRoute, translateTextRoute } from "./translation";
+import { synthesizeSpeechRoute } from "./tts";
 
 const http = httpRouter();
 
@@ -227,6 +228,15 @@ http.route({ path: "/translation/audio", method: "OPTIONS", handler: corsPreflig
 http.route({ path: "/translation/audio", method: "POST", handler: translateAudioRoute });
 http.route({ path: "/translation/text", method: "OPTIONS", handler: corsPreflightRoute });
 http.route({ path: "/translation/text", method: "POST", handler: translateTextRoute });
+
+/**
+ * S16 Kokoro speech synthesis. The browser authenticates with its Convex Auth
+ * access token; identity and project/turn ownership are re-derived server-side
+ * on every request and the synthesized bytes are streamed straight back —
+ * never stored, never exposed as a `storage.getUrl` bearer link.
+ */
+http.route({ path: "/tts/synthesize", method: "OPTIONS", handler: corsPreflightRoute });
+http.route({ path: "/tts/synthesize", method: "POST", handler: synthesizeSpeechRoute });
 
 auth.addHttpRoutes(http);
 

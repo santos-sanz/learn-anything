@@ -16,7 +16,7 @@ type TestInstance = ReturnType<typeof makeTest>;
 
 const runToCompletion = async (t: TestInstance): Promise<{ completed: boolean; cursor: string | null; schemaVersion: number }> => {
   for (let attempt = 0; attempt < 10; attempt += 1) {
-    const result = await t.mutation(internal.migrations.bootstrapSchemaV10, {});
+    const result = await t.mutation(internal.migrations.bootstrapSchemaV11, {});
     if (result.completed) return result;
   }
   throw new Error("migration did not complete within the bounded step budget");
@@ -25,15 +25,15 @@ const runToCompletion = async (t: TestInstance): Promise<{ completed: boolean; c
 test("a clean synthetic reset is compatible after bootstrap", async () => {
   const t = makeTest();
   expect(await t.query(internal.migrations.checkCompatibility, {})).toMatchObject({ compatible: false, foundSchemaVersion: null });
-  await t.mutation(internal.migrations.bootstrapSchemaV10, {});
-  expect(await t.mutation(internal.migrations.bootstrapSchemaV10, {})).toEqual({ completed: true, cursor: null, schemaVersion: 10 });
-  expect(await t.query(internal.migrations.checkCompatibility, {})).toMatchObject({ compatible: true, foundSchemaVersion: 10 });
+  await t.mutation(internal.migrations.bootstrapSchemaV11, {});
+  expect(await t.mutation(internal.migrations.bootstrapSchemaV11, {})).toEqual({ completed: true, cursor: null, schemaVersion: 11 });
+  expect(await t.query(internal.migrations.checkCompatibility, {})).toMatchObject({ compatible: true, foundSchemaVersion: 11 });
 });
 
 test("the migration retry resumes without duplicate technical state", async () => {
   const t = makeTest();
-  expect(await t.mutation(internal.migrations.bootstrapSchemaV10, {})).toEqual({ completed: false, cursor: "", schemaVersion: 10 });
-  expect(await t.mutation(internal.migrations.bootstrapSchemaV10, {})).toEqual({ completed: true, cursor: null, schemaVersion: 10 });
+  expect(await t.mutation(internal.migrations.bootstrapSchemaV11, {})).toEqual({ completed: false, cursor: "", schemaVersion: 11 });
+  expect(await t.mutation(internal.migrations.bootstrapSchemaV11, {})).toEqual({ completed: true, cursor: null, schemaVersion: 11 });
   const state = await t.run(async (ctx) => ({ metadata: await ctx.db.query("schemaMetadata").collect(), runs: await ctx.db.query("migrationRuns").collect() }));
   expect(state.metadata).toHaveLength(1);
   expect(state.runs).toHaveLength(1);
@@ -44,8 +44,8 @@ test("a newer deployed schema is rejected instead of being downgraded", async ()
   const t = makeTest();
   await t.run(async (ctx) => {
     await ctx.db.insert("migrationRuns", {
-      migration: "bootstrap-schema-v10",
-      targetSchemaVersion: 10,
+      migration: "bootstrap-schema-v11",
+      targetSchemaVersion: 11,
       status: "running",
       cursor: "",
       attempts: 1,
@@ -53,13 +53,13 @@ test("a newer deployed schema is rejected instead of being downgraded", async ()
     });
     await ctx.db.insert("schemaMetadata", {
       key: "primary",
-      schemaVersion: 11,
-      functionVersion: 11,
+      schemaVersion: 12,
+      functionVersion: 12,
       updatedAt: 1,
     });
   });
 
-  await expect(t.mutation(internal.migrations.bootstrapSchemaV10, {})).rejects.toThrow(
+  await expect(t.mutation(internal.migrations.bootstrapSchemaV11, {})).rejects.toThrow(
     "Deployment schema is newer than this migration.",
   );
 });
@@ -72,10 +72,10 @@ test("a schema version 4 (S08 documents) deployment upgrades in place; optional 
     await ctx.db.insert("migrationRuns", { migration: "bootstrap-schema-v4", targetSchemaVersion: 4, status: "completed", cursor: null, attempts: 1, updatedAt: 1 });
     await ctx.db.insert("schemaMetadata", { key: "primary", schemaVersion: 4, functionVersion: 4, updatedAt: 1 });
   });
-  expect(await t.query(internal.migrations.checkCompatibility, {})).toMatchObject({ compatible: false, foundSchemaVersion: 4, expectedSchemaVersion: 10 });
-  expect(await t.mutation(internal.migrations.bootstrapSchemaV10, {})).toEqual({ completed: false, cursor: "", schemaVersion: 10 });
-  expect(await t.mutation(internal.migrations.bootstrapSchemaV10, {})).toEqual({ completed: true, cursor: null, schemaVersion: 10 });
-  expect(await t.query(internal.migrations.checkCompatibility, {})).toMatchObject({ compatible: true, foundSchemaVersion: 10, expectedFunctionVersion: 10 });
+  expect(await t.query(internal.migrations.checkCompatibility, {})).toMatchObject({ compatible: false, foundSchemaVersion: 4, expectedSchemaVersion: 11 });
+  expect(await t.mutation(internal.migrations.bootstrapSchemaV11, {})).toEqual({ completed: false, cursor: "", schemaVersion: 11 });
+  expect(await t.mutation(internal.migrations.bootstrapSchemaV11, {})).toEqual({ completed: true, cursor: null, schemaVersion: 11 });
+  expect(await t.query(internal.migrations.checkCompatibility, {})).toMatchObject({ compatible: true, foundSchemaVersion: 11, expectedFunctionVersion: 11 });
   await expect(a.query(api.projects.getProject, { projectId: legacy })).resolves.toMatchObject({ name: "Legacy", createdAt: 1 });
   const raw = await t.run(async (ctx) => ctx.db.get(legacy));
   expect(raw).toMatchObject({ ownerId: "a", name: "Legacy" });
@@ -92,10 +92,10 @@ test("a schema version 5 (S21) deployment adopts the current marker", async () =
     await ctx.db.insert("migrationRuns", { migration: "bootstrap-schema-v5", targetSchemaVersion: 5, status: "completed", cursor: null, attempts: 1, updatedAt: 1 });
     await ctx.db.insert("schemaMetadata", { key: "primary", schemaVersion: 5, functionVersion: 5, updatedAt: 1 });
   });
-  expect(await t.query(internal.migrations.checkCompatibility, {})).toMatchObject({ compatible: false, foundSchemaVersion: 5, expectedSchemaVersion: 10 });
-  expect(await t.mutation(internal.migrations.bootstrapSchemaV10, {})).toEqual({ completed: false, cursor: "", schemaVersion: 10 });
-  expect(await t.mutation(internal.migrations.bootstrapSchemaV10, {})).toEqual({ completed: true, cursor: null, schemaVersion: 10 });
-  expect(await t.query(internal.migrations.checkCompatibility, {})).toMatchObject({ compatible: true, foundSchemaVersion: 10, expectedFunctionVersion: 10 });
+  expect(await t.query(internal.migrations.checkCompatibility, {})).toMatchObject({ compatible: false, foundSchemaVersion: 5, expectedSchemaVersion: 11 });
+  expect(await t.mutation(internal.migrations.bootstrapSchemaV11, {})).toEqual({ completed: false, cursor: "", schemaVersion: 11 });
+  expect(await t.mutation(internal.migrations.bootstrapSchemaV11, {})).toEqual({ completed: true, cursor: null, schemaVersion: 11 });
+  expect(await t.query(internal.migrations.checkCompatibility, {})).toMatchObject({ compatible: true, foundSchemaVersion: 11, expectedFunctionVersion: 11 });
   const state = await t.run(async (ctx) => ({ runs: await ctx.db.query("migrationRuns").collect() }));
   expect(state.runs).toHaveLength(2);
 });
@@ -106,19 +106,46 @@ test("a schema version 7 (S13) deployment adopts the current marker without a ba
     await ctx.db.insert("migrationRuns", { migration: "bootstrap-schema-v7", targetSchemaVersion: 7, status: "completed", cursor: null, attempts: 1, updatedAt: 1 });
     await ctx.db.insert("schemaMetadata", { key: "primary", schemaVersion: 7, functionVersion: 7, updatedAt: 1 });
   });
-  expect(await t.query(internal.migrations.checkCompatibility, {})).toMatchObject({ compatible: false, foundSchemaVersion: 7, expectedSchemaVersion: 10, expectedFunctionVersion: 10 });
-  expect(await t.mutation(internal.migrations.bootstrapSchemaV10, {})).toEqual({ completed: false, cursor: "", schemaVersion: 10 });
-  expect(await t.mutation(internal.migrations.bootstrapSchemaV10, {})).toEqual({ completed: true, cursor: null, schemaVersion: 10 });
-  expect(await t.query(internal.migrations.checkCompatibility, {})).toMatchObject({ compatible: true, foundSchemaVersion: 10, expectedFunctionVersion: 10 });
+  expect(await t.query(internal.migrations.checkCompatibility, {})).toMatchObject({ compatible: false, foundSchemaVersion: 7, expectedSchemaVersion: 11, expectedFunctionVersion: 11 });
+  expect(await t.mutation(internal.migrations.bootstrapSchemaV11, {})).toEqual({ completed: false, cursor: "", schemaVersion: 11 });
+  expect(await t.mutation(internal.migrations.bootstrapSchemaV11, {})).toEqual({ completed: true, cursor: null, schemaVersion: 11 });
+  expect(await t.query(internal.migrations.checkCompatibility, {})).toMatchObject({ compatible: true, foundSchemaVersion: 11, expectedFunctionVersion: 11 });
   const state = await t.run(async (ctx) => ({ runs: await ctx.db.query("migrationRuns").collect() }));
   expect(state.runs).toHaveLength(2);
 });
 
-
-test("a schema version 8 (S14) deployment adopts the current marker; its documents read as live without a backfill", async () => {
+test("a schema version 8 (S14) deployment adopts the current marker and keeps its data readable", async () => {
   const t = makeTest();
-  const ids = await t.run(async (ctx) => {
-    const projectId = await ctx.db.insert("projects", { ownerId: "a", name: "Legacy", createdAt: 1, deletedAt: null });
+  const seeded = await t.run(async (ctx) => {
+    const projectId = await ctx.db.insert("projects", {
+      ownerId: "a",
+      name: "Legacy practice",
+      goal: "Practise Spanish",
+      mode: "language-practice",
+      createdAt: 1,
+      deletedAt: null,
+    });
+    const sessionId = await ctx.db.insert("learningSessions", {
+      ownerId: "a",
+      projectId,
+      sessionKey: "default",
+      createdAt: 1,
+      endedAt: null,
+    });
+    const turnId = await ctx.db.insert("tutorTurns", {
+      ownerId: "a",
+      projectId,
+      sessionId,
+      turnId: "turn-legacy",
+      status: "completed",
+      attempts: 1,
+      learnerText: "Hola, ¿cómo estás?",
+      retrievedChunkIds: [],
+      evidence: { status: "insufficient-evidence", reason: "EMPTY_CORPUS" },
+      answerBasis: "general-explanation",
+      createdAt: 1,
+      updatedAt: 1,
+    });
     const storageId = await ctx.storage.store(new Blob(["legacy"], { type: "text/markdown" }));
     const privateFileId = await ctx.db.insert("privateFiles", { ownerId: "a", projectId, storageId, contentType: "text/markdown", createdAt: 1 });
     const documentId = await ctx.db.insert("documents", {
@@ -138,21 +165,30 @@ test("a schema version 8 (S14) deployment adopts the current marker; its documen
     });
     await ctx.db.insert("migrationRuns", { migration: "bootstrap-schema-v8", targetSchemaVersion: 8, status: "completed", cursor: null, attempts: 1, updatedAt: 1 });
     await ctx.db.insert("schemaMetadata", { key: "primary", schemaVersion: 8, functionVersion: 8, updatedAt: 1 });
-    return { documentId };
+    return { projectId, turnId, documentId };
   });
 
-  expect(await t.query(internal.migrations.checkCompatibility, {})).toMatchObject({ compatible: false, foundSchemaVersion: 8, expectedSchemaVersion: 10 });
-  expect(await t.mutation(internal.migrations.bootstrapSchemaV10, {})).toEqual({ completed: false, cursor: "", schemaVersion: 10 });
-  expect(await t.mutation(internal.migrations.bootstrapSchemaV10, {})).toEqual({ completed: true, cursor: null, schemaVersion: 10 });
-  expect(await t.query(internal.migrations.checkCompatibility, {})).toMatchObject({ compatible: true, foundSchemaVersion: 10, expectedFunctionVersion: 10 });
+  expect(await t.query(internal.migrations.checkCompatibility, {})).toMatchObject({ compatible: false, foundSchemaVersion: 8, expectedSchemaVersion: 11, expectedFunctionVersion: 11 });
+  expect(await t.mutation(internal.migrations.bootstrapSchemaV11, {})).toEqual({ completed: false, cursor: "", schemaVersion: 11 });
+  expect(await t.mutation(internal.migrations.bootstrapSchemaV11, {})).toEqual({ completed: true, cursor: null, schemaVersion: 11 });
+  expect(await t.query(internal.migrations.checkCompatibility, {})).toMatchObject({ compatible: true, foundSchemaVersion: 11, expectedFunctionVersion: 11 });
 
-  // The optional S22 tombstone field is absent on pre-S22 rows, so they stay
-  // valid and read as live documents; no backfill is required.
-  const raw = await t.run(async (ctx) => ctx.db.get(ids.documentId));
-  expect(raw).toMatchObject({ filename: "legacy.md", status: "ready" });
-  expect(raw).not.toHaveProperty("deletedAt");
-  const runs = await t.run(async (ctx) => ctx.db.query("migrationRuns").collect());
-  expect(runs.filter((run) => run.migration === "bootstrap-schema-v10")).toHaveLength(1);
+  // S19: S14-era rows stay valid - the language-practice fields are optional.
+  // S22: the optional tombstone is absent on pre-S22 rows, so the document
+  // stays valid and reads as live; no backfill is required for either scope.
+  const state = await t.run(async (ctx) => ({
+    project: await ctx.db.get(seeded.projectId),
+    turn: await ctx.db.get(seeded.turnId),
+    document: await ctx.db.get(seeded.documentId),
+    runs: await ctx.db.query("migrationRuns").collect(),
+  }));
+  expect(state.project).toMatchObject({ goal: "Practise Spanish", mode: "language-practice" });
+  expect(state.project).not.toHaveProperty("languagePractice");
+  expect(state.turn).toMatchObject({ answerBasis: "general-explanation", status: "completed" });
+  expect(state.document).toMatchObject({ filename: "legacy.md", status: "ready" });
+  expect(state.document).not.toHaveProperty("deletedAt");
+  expect(state.runs).toHaveLength(2);
+  expect(state.runs.filter((run) => run.migration === "bootstrap-schema-v11")).toHaveLength(1);
 });
 
 test("a schema version 3 deployment adopts the current marker without a backfill", async () => {
@@ -162,10 +198,10 @@ test("a schema version 3 deployment adopts the current marker without a backfill
     await ctx.db.insert("migrationRuns", { migration: "bootstrap-schema-v3", targetSchemaVersion: 3, status: "completed", cursor: null, attempts: 1, updatedAt: 1 });
     await ctx.db.insert("schemaMetadata", { key: "primary", schemaVersion: 3, functionVersion: 3, updatedAt: 1 });
   });
-  expect(await t.query(internal.migrations.checkCompatibility, {})).toMatchObject({ compatible: false, foundSchemaVersion: 3, expectedSchemaVersion: 10 });
-  expect(await t.mutation(internal.migrations.bootstrapSchemaV10, {})).toEqual({ completed: false, cursor: "", schemaVersion: 10 });
-  expect(await t.mutation(internal.migrations.bootstrapSchemaV10, {})).toEqual({ completed: true, cursor: null, schemaVersion: 10 });
-  expect(await t.query(internal.migrations.checkCompatibility, {})).toMatchObject({ compatible: true, foundSchemaVersion: 10, expectedFunctionVersion: 10 });
+  expect(await t.query(internal.migrations.checkCompatibility, {})).toMatchObject({ compatible: false, foundSchemaVersion: 3, expectedSchemaVersion: 11 });
+  expect(await t.mutation(internal.migrations.bootstrapSchemaV11, {})).toEqual({ completed: false, cursor: "", schemaVersion: 11 });
+  expect(await t.mutation(internal.migrations.bootstrapSchemaV11, {})).toEqual({ completed: true, cursor: null, schemaVersion: 11 });
+  expect(await t.query(internal.migrations.checkCompatibility, {})).toMatchObject({ compatible: true, foundSchemaVersion: 11, expectedFunctionVersion: 11 });
   const state = await t.run(async (ctx) => ({
     project: await ctx.db.get(project),
     runs: await ctx.db.query("migrationRuns").collect(),
@@ -213,22 +249,22 @@ test("a schema version 4 deployment backfills S09 fields on existing jobs", asyn
     return { projectId, jobId };
   });
 
-  expect(await t.query(internal.migrations.checkCompatibility, {})).toMatchObject({ compatible: false, foundSchemaVersion: 4, expectedSchemaVersion: 10 });
+  expect(await t.query(internal.migrations.checkCompatibility, {})).toMatchObject({ compatible: false, foundSchemaVersion: 4, expectedSchemaVersion: 11 });
 
-  expect(await t.mutation(internal.migrations.bootstrapSchemaV10, {})).toEqual({ completed: false, cursor: "", schemaVersion: 10 });
-  const batched = await t.mutation(internal.migrations.bootstrapSchemaV10, {});
-  expect(batched).toMatchObject({ completed: false, schemaVersion: 10 });
+  expect(await t.mutation(internal.migrations.bootstrapSchemaV11, {})).toEqual({ completed: false, cursor: "", schemaVersion: 11 });
+  const batched = await t.mutation(internal.migrations.bootstrapSchemaV11, {});
+  expect(batched).toMatchObject({ completed: false, schemaVersion: 11 });
 
   // An interrupted backfill that replays its batch must be idempotent.
-  const run = await t.run(async (ctx) => ctx.db.query("migrationRuns").withIndex("by_migration", (q) => q.eq("migration", "bootstrap-schema-v10")).unique());
+  const run = await t.run(async (ctx) => ctx.db.query("migrationRuns").withIndex("by_migration", (q) => q.eq("migration", "bootstrap-schema-v11")).unique());
   expect(run).not.toBeNull();
   await t.run(async (ctx) => {
     if (run !== null) await ctx.db.patch(run._id, { cursor: "" });
   });
-  expect(await t.mutation(internal.migrations.bootstrapSchemaV10, {})).toMatchObject({ completed: false, schemaVersion: 10 });
+  expect(await t.mutation(internal.migrations.bootstrapSchemaV11, {})).toMatchObject({ completed: false, schemaVersion: 11 });
 
   await runToCompletion(t);
-  expect(await t.query(internal.migrations.checkCompatibility, {})).toMatchObject({ compatible: true, foundSchemaVersion: 10, expectedFunctionVersion: 10 });
+  expect(await t.query(internal.migrations.checkCompatibility, {})).toMatchObject({ compatible: true, foundSchemaVersion: 11, expectedFunctionVersion: 11 });
   const state = await t.run(async (ctx) => ({
     job: await ctx.db.get(ids.jobId),
     runs: await ctx.db.query("migrationRuns").collect(),
@@ -236,10 +272,10 @@ test("a schema version 4 deployment backfills S09 fields on existing jobs", asyn
   }));
   expect(state.job).toMatchObject({ status: "queued", attempts: 0, nextAttemptAt: now });
   expect(state.job?.maxAttempts).toBeUndefined();
-  expect(state.metadata).toMatchObject({ schemaVersion: 10, functionVersion: 10 });
-  const versionTenRuns = state.runs.filter((entry) => entry.migration === "bootstrap-schema-v10");
-  expect(versionTenRuns).toHaveLength(1);
-  expect(versionTenRuns[0].attempts).toBeGreaterThan(2);
+  expect(state.metadata).toMatchObject({ schemaVersion: 11, functionVersion: 11 });
+  const versionElevenRuns = state.runs.filter((entry) => entry.migration === "bootstrap-schema-v11");
+  expect(versionElevenRuns).toHaveLength(1);
+  expect(versionElevenRuns[0].attempts).toBeGreaterThan(2);
 });
 
 test("a schema version 2 deployment upgrades in place without data loss", async () => {
@@ -249,10 +285,10 @@ test("a schema version 2 deployment upgrades in place without data loss", async 
     await ctx.db.insert("migrationRuns", { migration: "bootstrap-schema-v2", targetSchemaVersion: 2, status: "completed", cursor: null, attempts: 1, updatedAt: 1 });
     await ctx.db.insert("schemaMetadata", { key: "primary", schemaVersion: 2, functionVersion: 2, updatedAt: 1 });
   });
-  expect(await t.query(internal.migrations.checkCompatibility, {})).toMatchObject({ compatible: false, foundSchemaVersion: 2, expectedSchemaVersion: 10 });
-  expect(await t.mutation(internal.migrations.bootstrapSchemaV10, {})).toEqual({ completed: false, cursor: "", schemaVersion: 10 });
-  expect(await t.mutation(internal.migrations.bootstrapSchemaV10, {})).toEqual({ completed: true, cursor: null, schemaVersion: 10 });
-  expect(await t.query(internal.migrations.checkCompatibility, {})).toMatchObject({ compatible: true, foundSchemaVersion: 10, expectedFunctionVersion: 10 });
+  expect(await t.query(internal.migrations.checkCompatibility, {})).toMatchObject({ compatible: false, foundSchemaVersion: 2, expectedSchemaVersion: 11 });
+  expect(await t.mutation(internal.migrations.bootstrapSchemaV11, {})).toEqual({ completed: false, cursor: "", schemaVersion: 11 });
+  expect(await t.mutation(internal.migrations.bootstrapSchemaV11, {})).toEqual({ completed: true, cursor: null, schemaVersion: 11 });
+  expect(await t.query(internal.migrations.checkCompatibility, {})).toMatchObject({ compatible: true, foundSchemaVersion: 11, expectedFunctionVersion: 11 });
   const state = await t.run(async (ctx) => ({ projects: await ctx.db.get(project), runs: await ctx.db.query("migrationRuns").collect() }));
   expect(state.projects).toMatchObject({ ownerId: "a", name: "A" });
   expect(state.runs).toHaveLength(2);

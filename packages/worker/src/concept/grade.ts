@@ -9,8 +9,10 @@ import type { ActivityOutcome, ConceptActivity, GradedOutcome } from "./prompt.j
  * - `questionFirstSatisfied` is the server-side guard for asking activities:
  *   a `socratic` reply must ask a question, and an ungraded `teach-back`/
  *   `quiz` reply must ask a question (a checked reply carries its verdict
- *   instead). A lecture-only reply fails the turn visibly rather than being
- *   stored as if the tutor had engaged the learner.
+ *   instead). "Ask a question" is `hasQuestion`'s precise rule below — a word
+ *   run terminated by `?`, never a bare question mark. A lecture-only reply
+ *   fails the turn visibly rather than being stored as if the tutor had
+ *   engaged the learner.
  * - Outcomes describe one answer only. Nothing here scores a learner or
  *   claims a learning outcome.
  */
@@ -28,9 +30,20 @@ export function extractActivityVerdict(answer: string): GradedOutcome | null {
   return verdict;
 }
 
-/** Whether the reply engages the learner with at least one question. */
+/** Whether the reply engages the learner with at least one question.
+ *
+ * Precise rule: a question is a run of letters/digits and light word
+ * separators (space, `, ; : ' " ( ) -`) **terminated by** `?`/`？`. A bare
+ * question mark never satisfies question-first on its own: `?`, `??`,
+ * `Right!?`, a lecture ending in `. ?` or an isolated mark appended to a
+ * lecture contain no such word run, so they are not questions. Sentence
+ * punctuation immediately before the mark ends the run, and only the content
+ * that can legally precede the mark inside one sentence counts.
+ */
+const QUESTION_SENTENCE = /[\p{L}\p{N}][\p{L}\p{N}\s,;:'"()-]*[?？]/u;
+
 export function hasQuestion(answer: string): boolean {
-  return /[?？]/.test(answer);
+  return QUESTION_SENTENCE.test(answer);
 }
 
 /**

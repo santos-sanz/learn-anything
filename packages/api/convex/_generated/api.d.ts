@@ -18,6 +18,7 @@ import type * as embeddings from "../embeddings.js";
 import type * as files from "../files.js";
 import type * as http from "../http.js";
 import type * as ingestion from "../ingestion.js";
+import type * as languagePractice from "../languagePractice.js";
 import type * as migrations from "../migrations.js";
 import type * as projects from "../projects.js";
 import type * as redirects from "../redirects.js";
@@ -25,6 +26,7 @@ import type * as retrieval from "../retrieval.js";
 import type * as sources from "../sources.js";
 import type * as stt from "../stt.js";
 import type * as translation from "../translation.js";
+import type * as tts from "../tts.js";
 import type * as tutor from "../tutor.js";
 import type * as version from "../version.js";
 
@@ -45,6 +47,7 @@ declare const fullApi: ApiFromModules<{
   files: typeof files;
   http: typeof http;
   ingestion: typeof ingestion;
+  languagePractice: typeof languagePractice;
   migrations: typeof migrations;
   projects: typeof projects;
   redirects: typeof redirects;
@@ -52,6 +55,7 @@ declare const fullApi: ApiFromModules<{
   sources: typeof sources;
   stt: typeof stt;
   translation: typeof translation;
+  tts: typeof tts;
   tutor: typeof tutor;
   version: typeof version;
 }>;

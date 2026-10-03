@@ -9,6 +9,7 @@ import {
   buildTutorUserMessage,
   composeTutorAnswer,
   extractActivityVerdict,
+  hasQuestion,
   parseTutorUserMessage,
   questionFirstSatisfied,
   requiresQuestionFirst,
@@ -109,6 +110,31 @@ test("the question-first guard distinguishes asking replies from lecture-only on
   expect(requiresQuestionFirst("teach-back", lecture)).toBe(true);
   expect(questionFirstSatisfied("teach-back", lecture)).toBe(false);
   expect(questionFirstSatisfied("teach-back", "Thanks for trying. What in the notes supports that?")).toBe(true);
+});
+
+test("a bare question mark alone never satisfies question-first", () => {
+  const lecture = "Photosynthesis is the process plants use to convert light into chemical energy.";
+
+  // `hasQuestion` needs a word run terminated by `?`, not just a mark.
+  expect(hasQuestion("?")).toBe(false);
+  expect(hasQuestion("??")).toBe(false);
+  expect(hasQuestion("\uff1f")).toBe(false);
+  expect(hasQuestion("Right!?")).toBe(false);
+  expect(hasQuestion(`${lecture} .?`)).toBe(false);
+  expect(hasQuestion(`${lecture} ?`)).toBe(false);
+
+  // A real question still counts, wherever it sits in the reply.
+  expect(hasQuestion("What do you already know about how plants capture sunlight?")).toBe(true);
+  expect(hasQuestion("Thanks for trying. What in the notes supports that?")).toBe(true);
+  expect(hasQuestion("3 + 4 = 7?")).toBe(true);
+
+  expect(questionFirstSatisfied("socratic", `${lecture} ?`)).toBe(false);
+  expect(questionFirstSatisfied("socratic", "What do you already know about sunlight?")).toBe(true);
+  expect(questionFirstSatisfied("teach-back", `${lecture} ?`)).toBe(false);
+
+  // An ungraded reply without a real question resolves to `uncertain`,
+  // never to an implied engagement it did not show.
+  expect(resolveActivityOutcome("teach-back", `${lecture} ?`)).toBe("uncertain");
 });
 
 test("teach-back and quiz answer fixtures resolve to explicit outcomes", () => {
