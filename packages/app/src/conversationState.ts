@@ -228,6 +228,8 @@ export function generatingFailureMessage(code: string, retryAfterMs: number | nu
       return "This turn is still running on the server. Retry to pick up its result — it will not run twice.";
     case "TURN_ATTEMPT_LOST":
       return "Another attempt took over this turn. Retry to pick up its result.";
+    case "TURN_CONCURRENCY_LIMIT":
+      return "Too many of your turns are still running. Wait for them to finish, then retry.";
     case "TURN_CANCELLED":
       return "This turn was cancelled before an answer was written. Record again to start a new turn.";
     case "TURN_FAILED":

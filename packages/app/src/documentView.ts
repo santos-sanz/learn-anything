@@ -145,6 +145,8 @@ export function mapDocumentError(error: unknown, context: "list" | "upload" | "r
       return "That file type isn’t supported. Upload a PDF, Markdown or plain text file.";
     case "QUOTA_EXCEEDED":
       return "The deployment is out of storage. Delete a document or try again later.";
+    case "RATE_LIMITED":
+      return "Too many requests right now. Wait a moment, then try again.";
     case "UPLOAD_FAILED":
       return "The upload didn’t go through. Check your connection and try again.";
     case "RETRY_NOT_ALLOWED":

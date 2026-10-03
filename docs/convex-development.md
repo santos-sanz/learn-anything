@@ -216,7 +216,7 @@ Schema/function version 7 adds only the new (initially empty) `chunkEmbeddings`
 table and index; its marker migration is an adoption that keeps the idempotent
 `nextAttemptAt` backfill for pre-v6 deployments. The dev deployment currently
 reports `foundSchemaVersion: null`, so run the current marker
-(`npx convex run internal.migrations.bootstrapSchemaV11 '{}'`, see S19/S20/S22 below)
+(`npx convex run internal.migrations.bootstrapSchemaV12 '{}'`, see S19/S20/S22 below)
 after deploying to make `checkCompatibility` pass. Rollback is a code rollback: older
 releases ignore the new table, no rows carry old-only data, and no backfill has
 to be reversed; the vector index can be removed by pushing a schema without it
@@ -256,7 +256,7 @@ A candidate counts as evidence only when its score is strictly above `minScore`:
 
 ## S14 grounded tutor session/turn orchestration
 
-Schema/function version 8 adds two empty, additive tables on top of S12/S13's version 7: `tutorTurns` and `citations`. `bootstrapSchemaV8` (renamed forward by every later story, same replace-the-marker step every version bump takes) is a marker-only adoption that keeps the idempotent `nextAttemptAt` backfill so a pre-v6 deployment is not skipped — run `npx convex run internal.migrations.bootstrapSchemaV11 '{}'` (the current marker, which supersedes V8/V9/V10) after deploying this release so `checkCompatibility` passes. Rollback is a code rollback while both tables are empty; a populated v8 deployment (turn rows or stored citations) must stay on a compatible v8+ release until a separately tested downgrade exists. `citations` and `tutorTurns` join the S04 two-phase deletion protocol in `deleteProjectBatch`, so a deleted project leaves no turn or citation rows behind. As with S15/S18, `convex/_generated/api.d.ts` gained the `tutor` module entry by hand because offline `npx convex codegen` needs a configured deployment.
+Schema/function version 8 adds two empty, additive tables on top of S12/S13's version 7: `tutorTurns` and `citations`. `bootstrapSchemaV8` (renamed forward by every later story, same replace-the-marker step every version bump takes) is a marker-only adoption that keeps the idempotent `nextAttemptAt` backfill so a pre-v6 deployment is not skipped — run `npx convex run internal.migrations.bootstrapSchemaV12 '{}'` (the current marker, which supersedes V8/V9/V10) after deploying this release so `checkCompatibility` passes. Rollback is a code rollback while both tables are empty; a populated v8 deployment (turn rows or stored citations) must stay on a compatible v8+ release until a separately tested downgrade exists. `citations` and `tutorTurns` join the S04 two-phase deletion protocol in `deleteProjectBatch`, so a deleted project leaves no turn or citation rows behind. As with S15/S18, `convex/_generated/api.d.ts` gained the `tutor` module entry by hand because offline `npx convex codegen` needs a configured deployment.
 
 ### Public surface and order of operations
 
@@ -288,7 +288,7 @@ The answer is consumed through the S11 `streamTutor` (provider streaming, `strea
 
 ## S16 Kokoro speech synthesis and playback
 
-No schema, validator or version-marker change: `SCHEMA_VERSION`/`FUNCTION_VERSION` stay at the release value (11 after S19 + S22 + S20) and the bootstrap marker stays `bootstrap-schema-v11`, so there is no migration to run and the current marker already covers this story — S16 only adds functions and an HTTP route, never schema fields. The addition is one internal query, one public read, one HTTP route and the browser player; rollback is a plain code rollback (route, player and section revert together, nothing backfilled). As with S15/S18/S14, `convex/_generated/api.d.ts` gained the `tts` module entry by hand because offline `npx convex codegen` needs a configured deployment.
+No schema, validator or version-marker change: `SCHEMA_VERSION`/`FUNCTION_VERSION` stay at the release value (11 after S19 + S22 + S20) and the bootstrap marker of that release was `bootstrap-schema-v11` (renamed forward by S24 to `bootstrap-schema-v12`), so S16 added no migration of its own — it only adds functions and an HTTP route, never schema fields. The addition is one internal query, one public read, one HTTP route and the browser player; rollback is a plain code rollback (route, player and section revert together, nothing backfilled). As with S15/S18/S14, `convex/_generated/api.d.ts` gained the `tts` module entry by hand because offline `npx convex codegen` needs a configured deployment.
 
 ### Voice and language availability comes from provider configuration
 
@@ -310,7 +310,7 @@ Bytes are never committed: the route calls neither `ctx.storage` nor any insert,
 
 ## S19 language-practice tutor mode
 
-Schema/function version 10 (the union of S19 and S22, which each originally shipped as an independent version 9 on its own branch — see S22 below; S16 merges in beside them with no schema or marker change of its own, so its TTS queries and HTTP route ship under this same v10 marker) adds one empty table and two additive validator changes on top of S14's version 8: `projects.languagePractice` (optional object with `targetLanguage` `en|es`, `level` `beginner|intermediate|advanced`, `correctionStyle` `immediate|end-of-turn`, `goals[]`, `roleplayScenarios[]`), a third `translation` member on `tutorTurns.answerBasis`, and the `practisedTopics` table (`ownerId`, `projectId`, `sessionId`, `turnId`, `topic`, `level`, `targetLanguage`, `createdAt`, indexed by `by_owner_project` and `by_owner_project_turn`). All three are optional/empty-start, so an S14-era row still validates with no backfill; `bootstrapSchemaV11` (renamed forward from V10/V9/V8, same replace-the-marker step every version bump takes; S20 unions its own additive scope into version 11 — `v11 = v10 (S19 union S22) union S20`) is a marker-only adoption that keeps the idempotent `nextAttemptAt` backfill — run `npx convex run internal.migrations.bootstrapSchemaV11 '{}'` after deploying this release so `checkCompatibility` passes (`foundSchemaVersion: 11`). Rollback is a code rollback while `practisedTopics` is empty and no project carries `languagePractice`; a populated v10 deployment must stay on a compatible v10+ release until a separately tested downgrade exists. `practisedTopics` joins the S04 two-phase deletion protocol in `deleteProjectBatch`, so a deleted project leaves no practice history behind. As with S15/S18/S14, `convex/_generated/api.d.ts` gained the `languagePractice` module entry by hand because offline `npx convex codegen` needs a configured deployment.
+Schema/function version 10 (the union of S19 and S22, which each originally shipped as an independent version 9 on its own branch — see S22 below; S16 merges in beside them with no schema or marker change of its own, so its TTS queries and HTTP route ship under this same v10 marker) adds one empty table and two additive validator changes on top of S14's version 8: `projects.languagePractice` (optional object with `targetLanguage` `en|es`, `level` `beginner|intermediate|advanced`, `correctionStyle` `immediate|end-of-turn`, `goals[]`, `roleplayScenarios[]`), a third `translation` member on `tutorTurns.answerBasis`, and the `practisedTopics` table (`ownerId`, `projectId`, `sessionId`, `turnId`, `topic`, `level`, `targetLanguage`, `createdAt`, indexed by `by_owner_project` and `by_owner_project_turn`). All three are optional/empty-start, so an S14-era row still validates with no backfill; `bootstrapSchemaV11` (renamed forward from V10/V9/V8 and again by S24 to V12, same replace-the-marker step every version bump takes; S20 unions its own additive scope into version 11 — `v11 = v10 (S19 union S22) union S20`) is a marker-only adoption that keeps the idempotent `nextAttemptAt` backfill — run `npx convex run internal.migrations.bootstrapSchemaV12 '{}'` after deploying this release so `checkCompatibility` passes (`foundSchemaVersion: 12` once the current marker has run). Rollback is a code rollback while `practisedTopics` is empty and no project carries `languagePractice`; a populated v10 deployment must stay on a compatible v10+ release until a separately tested downgrade exists. `practisedTopics` joins the S04 two-phase deletion protocol in `deleteProjectBatch`, so a deleted project leaves no practice history behind. As with S15/S18/S14, `convex/_generated/api.d.ts` gained the `languagePractice` module entry by hand because offline `npx convex codegen` needs a configured deployment.
 
 ### Mode configuration and the minimal S14 hook
 
@@ -335,7 +335,7 @@ After a successful commit of a configured language-practice tutor turn, `runTurn
 Configuration: at most 5 goals and 5 roleplay scenarios, 200 characters each; practised topics at most 120 characters; history queries at most 100 rows (default 50). Supported practice/translation languages are `en` and `es` until S18's typed set grows — an unsupported pair is rejected, never silently substituted. Translation-request detection is a documented heuristic (addressed request framing + target-language cue + extractable text); questions about translation as a topic, ordinary practice text and ambiguity stay normal tutor turns, and the separate S18 route remains available. A language-practice project without configuration falls back to the plain S14 prompt and records no topics. The prompt tells the model never to claim certification or score pronunciation from text; the platform itself computes no such score anywhere.
 ## S22 document management and citation source viewer
 
-### Schema/function version 10 and migration (current marker: v11)
+### Schema/function version 10 and migration (current marker: v12)
 
 This branch added two purely additive structures as its own version 9:
 `documents.deletedAt` (`v.optional(v.number())`, absent on every live row) as
@@ -345,10 +345,10 @@ row is touched. S19 then landed an independent version 9 (language-practice
 config and `practisedTopics` history) on its own branch, so that merged release
 shipped as **version 10**, and S20 subsequently unioned its own additive scope
 on top as **version 11** — `v11 = v10 (S19 union S22) union S20`. The current
-marker `bootstrapSchemaV11` adopts any older deployment in
-place, superseding the `bootstrapSchemaV10`/`bootstrapSchemaV9`/`bootstrapSchemaV8` markers while
+marker `bootstrapSchemaV12` (renamed forward from V11) adopts any older
+deployment in place, superseding the `bootstrapSchemaV11`/`bootstrapSchemaV10`/`bootstrapSchemaV9`/`bootstrapSchemaV8` markers while
 keeping the idempotent `nextAttemptAt` backfill so a pre-v6 deployment is not
-skipped. Run `npx convex run internal.migrations.bootstrapSchemaV11 '{}'` after
+skipped. Run `npx convex run internal.migrations.bootstrapSchemaV12 '{}'` after
 deploying this release; `checkCompatibility` then reports
 `foundSchemaVersion: 11`.
 Rollback is a code rollback while no tombstones exist — older releases ignore
@@ -432,7 +432,7 @@ access-denied, deletion cleanup) plus component tests, and screenshots in
 
 ## S20 concept-learning mode, selection and progress events
 
-Schema/function version 11 — `v11 = v10 (S19 union S22) union S20` — unions S20's additive scope with the version-10 release (S22's tombstone/index plus S19's language-practice settings), which itself followed S14's version 8: `progressEvents` gains optional S20 columns (`idempotencyKey`, `activity`, `objective`, `difficulty`, `outcome`, `evidence`, `turnId`, `references`, `targetEventId`, `feedbackValue`, `retractedAt`) plus two indexes (`by_owner_project_idempotency`, `by_owner_project_target`), and `projects` gains optional `objective`/`difficulty`. Every new column is optional, so an S04-era event row and a v9 project row still validate and read as unset; no backfill exists. `bootstrapSchemaV11` (the same replace-the-marker step every version bump takes) adopts any older deployment in place and keeps the idempotent `nextAttemptAt` backfill so a pre-v6 deployment is not skipped — run `npx convex run internal.migrations.bootstrapSchemaV11 '{}'` after deploying this release so `checkCompatibility` passes. Rollback is a code rollback while no S20 selection or S20 event rows exist; a populated v11 deployment (a project with `objective`/`difficulty`, or a typed `progressEvents` row) must stay on a compatible v11+ release until a separately tested downgrade exists. As with S15/S18, `convex/_generated/api.d.ts` gained the `concept` module entry by hand because offline `npx convex codegen` needs a configured deployment. `progressEvents` already join the S04 two-phase deletion protocol, so no deletion change was needed.
+Schema/function version 11 — `v11 = v10 (S19 union S22) union S20` — unions S20's additive scope with the version-10 release (S22's tombstone/index plus S19's language-practice settings), which itself followed S14's version 8: `progressEvents` gains optional S20 columns (`idempotencyKey`, `activity`, `objective`, `difficulty`, `outcome`, `evidence`, `turnId`, `references`, `targetEventId`, `feedbackValue`, `retractedAt`) plus two indexes (`by_owner_project_idempotency`, `by_owner_project_target`), and `projects` gains optional `objective`/`difficulty`. Every new column is optional, so an S04-era event row and a v9 project row still validate and read as unset; no backfill exists. `bootstrapSchemaV11` (the same replace-the-marker step every version bump takes, renamed forward by S24 to `bootstrapSchemaV12`) adopts any older deployment in place and keeps the idempotent `nextAttemptAt` backfill so a pre-v6 deployment is not skipped — run `npx convex run internal.migrations.bootstrapSchemaV12 '{}'` after deploying this release so `checkCompatibility` passes. Rollback is a code rollback while no S20 selection or S20 event rows exist; a populated v11 deployment (a project with `objective`/`difficulty`, or a typed `progressEvents` row) must stay on a compatible v11+ release until a separately tested downgrade exists. As with S15/S18, `convex/_generated/api.d.ts` gained the `concept` module entry by hand because offline `npx convex codegen` needs a configured deployment. `progressEvents` already join the S04 two-phase deletion protocol, so no deletion change was needed.
 
 ### Selection: objective and difficulty
 
@@ -461,6 +461,232 @@ Feedback is one active event per `activity-completed` target: `recordFeedback({ 
 ### Operational limits
 
 One activity event per `turnId` (idempotency key), at most 50 references per event (the S14 citation maximum), progress pages of at most 200 events, one active feedback event per activity target (retract to re-rate), objective ≤ 500 characters, learner text ≤ 4,000 characters, answer ≤ 16,000 characters, and the S14/S13 bounds unchanged (top-k 8, 6,000-character context, 50 citations, bounded retries and poll interval). A lecture-only reply for an asking activity fails the turn visibly rather than being stored; queue-depth and quota handling remain S24's scope.
+## S24 bounded observability, rate limits and privacy lifecycle
+
+### Schema/function version 12 and migration
+
+Schema/function version 12 — `v12 = v11 union S24` — is purely additive: three
+empty tables (`rateLimitBuckets`, `telemetryEvents`, `deletionRequests`), the
+`tutorTurns.by_owner_status` index for the concurrent-turn cap, the
+`projects.by_owner_deleted` index for the account sweep, and one auth-table
+override (`authVerifiers` re-declared with an extra `sessionId` index —
+`authTables` indexes only `signature`, so without it a session-bound PKCE
+verifier could never be removed with its session). Nothing backfills:
+`bootstrapSchemaV12` (renamed forward from V11, same replace-the-marker step)
+keeps the idempotent `nextAttemptAt` backfill so a pre-v6 deployment is not
+skipped — run `npx convex run internal.migrations.bootstrapSchemaV12 '{}'`
+after deploying this release so `checkCompatibility` reports
+`foundSchemaVersion: 12`. Rollback is a code rollback while the S24 tables are
+empty and no release queries the new indexes; a populated v12 deployment
+(telemetry rows, active ledger rows, rate buckets) must stay on a compatible
+v12+ release until a separately tested downgrade exists, and removing a table
+again requires pushing a schema without it once no release reads it.
+`convex/_generated/api.d.ts` gained the `audioLimits` and `observability`
+module entries by hand for the usual reason (offline `npx convex codegen`
+needs a configured deployment).
+
+### Tenant-aware throttling and Retry-After
+
+`observedRoute` (`packages/api/convex/observability.ts`) wraps the five costly
+POST actions in `http.ts` — `/private-uploads`, `/stt/transcribe`,
+`/translation/audio`, `/translation/text`, `/tts/synthesize` — in a fixed
+order: identity from `ctx.auth` → per-learner fixed-window bucket → the
+unchanged handler → one redacted telemetry row (only when the request resolved
+to a project the caller owns). Anonymous requests fall straight through to the
+handler's `401`, and the wrapper never invents or suppresses a denial: it adds
+protection, never authorization (a foreign project still answers the handler's
+non-enumerating `404` even with a fresh bucket).
+
+Configuration (documented in `.env.example`, read per request, clamped):
+`RATE_LIMIT_REQUESTS` (default 60, 1..10000) per `RATE_LIMIT_WINDOW_SECONDS`
+(default 60, 1..3600), one bucket per learner and route
+(`by_owner_bucket`). The request that crosses the limit is refused with
+`429 { code: "RATE_LIMITED", retryAfterMs }` plus the standard
+`Retry-After: <ceil seconds>` header, `x-trace-id`, and the route's CORS
+headers, and consumes no provider work; denied attempts never extend the
+window count. `applyRateLimit` is a pure function of `(state, limit,
+windowMs, now)`, so both the header and the exact next-attempt moment are
+arithmetic the tests assert without sleeping. The limiter mutation fails open:
+a storage blip must never take a route down, and it cannot bypass a permission
+check because ownership stays inside the handler.
+
+Bounded retries honour the same budget in both directions:
+
+- **Server:** the S14 tutor retry loop already uses
+  `failure.retryAfterMs` as its delay floor (`packages/worker/src/tutor/turn.ts`)
+  and every provider `429` on the STT/translation/TTS routes now also emits the
+  `Retry-After` header alongside `retryAfterMs`.
+- **Client:** `requestTranscription` (`packages/app/src/transcribeClient.ts`)
+  performs at most one bounded auto-retry (`DEFAULT_TRANSCRIBE_MAX_ATTEMPTS`
+  = 2 attempts total). The wait is the larger of the `Retry-After` header
+  (delta-seconds) and the body's `retryAfterMs`; a declared wait beyond
+  `MAX_AUTO_RETRY_MS` (15 s) is **never truncated** — the failure surfaces with
+  the full wait instead of retrying early — and an abort stops both the wait
+  and the next attempt (`packages/app/src/retryPolicy.ts`). The translation and
+  TTS clients surface the wait as fixed copy ("Try again in N seconds") without
+  auto-retry.
+
+The **per-user concurrent-turn cap** lives at the `beginTurn` linearization
+point: a brand-new turn (or an expired-lease takeover) is refused with
+`{ state: "rate-limited" }` when the owner already holds
+`MAX_CONCURRENT_TURNS` (default 3, clamped 1..10) live `running` rows across
+every project — `runTurn` and `runActivity` map it to the typed
+`TURN_CONCURRENCY_LIMIT` before any provider request, and the browser maps that
+code to fixed copy. Only rows whose lease has not expired count (a stale row
+can never lock its owner out of the cap), and the same-`turnId`
+`in-progress` idempotency answer is unchanged.
+
+The **audio-duration cap** is server-side (`packages/api/convex/audioLimits.ts`):
+the container's own header is parsed before any provider request — MP4 `mvhd`
+and Matroska/WebM `Segment > Info > Duration × TimecodeScale` — and a declared
+duration above `MAX_AUDIO_DURATION_SECONDS` (default 60, clamped 5..600)
+answers `413 { code: "AUDIO_TOO_LONG", maxDurationSeconds }` with zero
+provider calls. Every malformed, truncated or absent duration resolves to
+"unknown", never a guess: OGG and live WebM streams without a Segment Duration
+stay bounded by the 8 MiB byte cap and the browser's 60-second recording
+budget (a documented residual, recorded in `docs/provider-data-handling.md`).
+The **upload-size cap** is unchanged from S08: `MAX_UPLOAD_BYTES` (empty →
+10 MiB product cap, never above `10485760`), with the existing boundary and
+clamping tests in `upload-contract.test.ts`/`document-uploads.test.ts`.
+
+### Redacted telemetry and log retention
+
+Telemetry is redacted by construction, not by filtering afterwards. The
+`telemetryEvents` validator fixes the column set (ids, timings and a handful
+of bounded numbers), and `buildTelemetryRow` copies only allowlisted inputs:
+`event` and `status` must be members of fixed sets, `traceId`/`ownerId` must
+match identifier patterns (no whitespace), numeric fields are range-checked,
+and `code` must be in the explicit `TELEMETRY_CODES` allowlist — so an
+uppercase, key-shaped secret can never qualify by *looking* like a token. An
+unrecognized value drops that field (or, for an unknown event/status/shape,
+the whole row) instead of throwing, which is what lets turn telemetry live in
+the same transaction as `commitTurn`/`failTurn` without ever risking a
+rollback. Nothing a caller could attach is copied: the S20 canary tests pass
+prompt, transcript and key strings through the builder and through real turn
+and route writes, then assert none of them appears in the serialized rows.
+
+Rows are written from exactly two places: the route wrapper (a fresh
+`traceId` per request, echoed as `x-trace-id` on every wrapped response) and
+the turn path (`commitTurn` → `ok`, `failTurn` → `error` with the typed code,
+`cancelTurn` → `cancelled`; the `traceId` is the turn id, so a row carries only
+ids, attempts and `durationMs`). `recordRouteEvent` re-verifies
+`(ownerId, projectId)` ownership before a row may exist, so every row names a
+project its owner actually owns and a project deletion removes its telemetry
+with everything else. The only `console` call site in this package logs a
+fixed message plus a token-shaped code, never an error message or stack.
+
+Retention is configured and rotated: `LOG_RETENTION_DAYS` (default 30,
+clamped 1..365) sets the cutoff and the hourly `telemetry-retention` cron runs
+`cleanupTelemetry`, which deletes at most 100 expired rows per call so an
+oversized backlog drains across scheduled runs instead of one unbounded
+mutation. `rateLimitBuckets` carry no content either (owner, route bucket,
+window, count) and live until account deletion.
+
+### Privacy lifecycle: project and account deletion
+
+Project deletion keeps the S04 two-phase protocol and gains a visible ledger.
+`requestProjectDeletion` soft-deletes the root and opens (or re-arms) a
+`deletionRequests` row as `pending`; every `deleteProjectBatch` marks it
+`deleting` with an attempt count, and only after the completion probe finds
+zero remaining rows does the batch delete the ledger row and then the project
+(a finished deletion therefore never leaves a reference to a project that no
+longer exists). The cascade now covers **every** table the story names:
+documents with their storage blobs and `privateFiles` rows, `ingestionJobs`
+(provider-job remnants), `documentChunks`, `chunkEmbeddings`, `messages`,
+`citations`, `tutorTurns`, `practisedTopics`, `progressEvents`,
+`learningSessions`, `learningGoals`, plus the S24 `telemetryEvents` and the
+S06 `agentConnectionTokens`. Failure is visible and retriable: a client
+observing a rejected or interrupted batch calls
+`reportDeletionFailure({ scope, projectId?, code })` (owner-only, fixed
+uppercase `code`, sanitized to `DELETION_FAILED` otherwise — a message can
+never be stored), `getDeletionStatus` exposes `pending`/`deleting`/`failed`
+per owned project and for the account, and the retry re-enters the same
+idempotent flow from the records that are still there. A completed deletion
+cannot be downgraded (reporting afterwards is `NOT_FOUND`), and completed
+ledger rows are removed, so an empty status means nothing is in flight.
+
+Account deletion is a staged, bounded sweep driven by
+`requestAccountDeletion` (opens the account ledger, soft-deletes up to 100
+live projects) and `runAccountDeletionBatch(limit ≤ 100)`:
+
+1. soft-delete live projects (`by_owner_deleted`) — and stop, if more live
+   projects remain, so content of a project that has not entered deletion is
+   never touched;
+2. documents with their blobs and registry rows, then every owner-scoped child
+   table (the same list as above, by `ownerId` prefix);
+3. project rows, together with their project-scoped ledger rows;
+4. only when nothing else remains: owner-level `rateLimitBuckets`, the
+   sign-in `authRateLimits` rows for the user's identifiers, then the Convex
+   Auth identity in strict child-before-parent order — verification codes,
+   accounts, refresh tokens, verifiers, sessions, and the `users` row itself
+   only when every child is already gone;
+5. a completion probe closes the account ledger row.
+
+A repeat call after completion reports `{ completed: true, deleted: 0 }`
+(idempotent close); a missing ledger with remaining residue is `NOT_FOUND`,
+so the driver must request first. Known residual: the pinned S06 access token
+lives up to 1 hour, so a retained token can act on the deleted id until it
+expires (the rows it creates reference an owner with no remaining login); the
+client signs out on completion. Both flows are non-enumerating
+(`UNAUTHENTICATED`/`NOT_FOUND`) and never weaken S05/S06 authorization.
+
+### App surface
+
+No new UI states were added: the existing failure surfaces carry the new
+codes. `generatingFailureMessage` maps `TURN_CONCURRENCY_LIMIT` to fixed copy,
+`mapDocumentError` maps `RATE_LIMITED`, every message is server-code-keyed
+with no backend interpolation, and the transcription client's bounded
+Retry-After retry is invisible until a `429` occurs.
+
+### Offline test evidence
+
+`packages/api/tests/rate-limits.test.ts` (10): window arithmetic with the
+exact denial budget and boundary, configuration clamps, the internal consumer
+under an explicit clock (counts, isolation per learner/route, scope
+resolution), the observable `429` + `Retry-After` + CORS + `x-trace-id`
+contract with zero provider calls, the provider-`429` header, and anonymous /
+foreign-project negatives.
+`packages/api/tests/telemetry.test.ts` (8): builder allowlist and canary
+dropping (prompt, key and a key-shaped `AKIA…` secret), stored-row key sets
+and `x-trace-id` ↔ `traceId` matching, turn rows for success and typed failure
+with the learner text canary absent from telemetry but present in the
+transcript, rate-limited rows, and retention (`LOG_RETENTION_DAYS` clamp,
+bounded 100-row batches draining a 150-row backlog).
+`packages/api/tests/audio-limits.test.ts` (8): hand-built MP4/WebM fixtures,
+malformed/truncated/duration-less input resolving to unknown, configuration
+clamps, `413 AUDIO_TOO_LONG` before any provider call on both audio routes,
+the configured cap applied at request time, and unknown-duration input passing
+under the byte cap.
+`packages/api/tests/turn-concurrency.test.ts` (5): the cap rejecting a third
+live turn with zero provider calls, `in-progress` unchanged at the cap,
+expired leases freeing slots, a completed turn under the cap with its
+telemetry row, and configuration clamps.
+`packages/api/tests/deletion-lifecycle.test.ts` (5): the project cascade over
+every table plus blobs and the ledger with a second learner untouched, the
+visible `failed` state with owner-only reporting and resumption to completion,
+failure-code sanitization, the account sweep draining content, buckets,
+telemetry and all auth tables (including `authRateLimits` for the user's
+email) while sparing another learner, and an idempotent retriable account
+failure. `packages/app/tests/retry-after.test.ts` (12): `Retry-After` parsing,
+delay arithmetic, the never-truncate decision, the exact next-attempt timing
+under an injected clock, bounded exhaustion, abort-during-wait, no retry for
+non-429 failures, and the new fixed copy. `schema-lifecycle.test.ts` covers
+the v12 marker (clean reset, retry, v2..v8 adoption, newer-schema rejection at
+13). Synthetic fixtures and mocked providers only: no live NaN/Convex/provider
+call exists anywhere in `pnpm test`.
+
+### Operational limits
+
+Per learner: 60 requests/60 s per costly route (configurable), 3 live turns
+(configurable 1..10), 60 s audio from the container header (configurable
+5..600 s) and 8 MiB per request, 10 MiB per upload, bounded transcription
+retries (2 attempts, never before the declared wait, never waiting more than
+15 s automatically). Telemetry: ids/timings only, 30-day default retention,
+100 rows per cleanup batch, one hourly cleanup. Deletion: batches of ≤100 row
+deletions, the app driver caps at 500 batches per project and surfaces
+`DELETION_INCOMPLETE` beyond that; account sweeps are bounded the same way.
+Identity teardown happens last and only after all content is gone.
+
 ## Plan and operational limits
 
 The selected plan is **Convex Free**, never metered Starter. Checked limits: 0.5 GB database, 1 GB/month database I/O, 1 GB file storage, 1 GB/month data egress, 0.5 GB search storage, 3,000 query-GB/month search and 1 million function calls/month. Reconfirm actual plan and current limits at any authorized provisioning/deployment; quota exhaustion must fail visibly and must not trigger paid upgrade. Roll back a failed release by redeploying the previous compatible commit; do not downgrade a populated schema until data compatibility is assessed.
