@@ -2,7 +2,7 @@
 
 ## Supported setup
 
-Use Node 22+ and the repository's pinned pnpm 10.20.0. Install with `pnpm install`; Convex 1.43.0, `convex-test` 0.0.60 and its Edge Runtime peers are exact versions in `packages/api/package.json` and `pnpm-lock.yaml`.
+Use Node 22+ and the repository's pinned pnpm 10.20.0. Install with `pnpm install`; Convex 1.43.0, `convex-test` 0.0.60 and `@edge-runtime/vm` are exact versions in `packages/api/package.json` and `pnpm-lock.yaml`. (The unused `@edge-runtime/jest-environment` pin was removed with the S12 dependency remediation: it only existed to pull Jest 29 internals that carried the unfixed `braces` advisory, nothing referenced it, and `convex-test` does not peer on it.)
 
 Run `pnpm --filter @learn-anything/api convex:dev` from the repository root (equivalent to `npx convex dev` in `packages/api`). It attaches only a development deployment, pushes checked-in schema/functions and regenerates `packages/api/convex/_generated/` typed bindings. The generated bindings are committed because the offline CI typecheck and `convex-test` suite need them without deployment credentials; regenerate and commit their diff whenever Convex functions or schema change.
 
