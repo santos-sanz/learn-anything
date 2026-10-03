@@ -1,0 +1,72 @@
+{
+  "answers": [
+    {
+      "id": "teach-back-correct",
+      "activity": "teach-back",
+      "answer": "Photosynthesis turns sunlight into chemical energy that ends up stored in glucose [1].\nVerdict: correct\n\nWhat would happen if the light-dependent reactions stopped?",
+      "expectedOutcome": "correct"
+    },
+    {
+      "id": "teach-back-partially-correct",
+      "activity": "teach-back",
+      "answer": "You said sunlight becomes energy, but you did not say where it is stored [1].\nVerdict: partially-correct.\n\nWhere does the energy end up?",
+      "expectedOutcome": "partially-correct"
+    },
+    {
+      "id": "quiz-wrong",
+      "activity": "quiz",
+      "answer": "That is not what the notes say: the light reactions split water and release oxygen [1].\nVerdict: wrong.\n\nWhich molecule is split during the light reactions?",
+      "expectedOutcome": "wrong"
+    },
+    {
+      "id": "quiz-uncertain",
+      "activity": "quiz",
+      "answer": "Your project documents do not cover this, so I cannot check the answer.\nVerdict: uncertain.\n\nWhat in the notes made you think that?",
+      "expectedOutcome": "uncertain"
+    },
+    {
+      "id": "quiz-verdict-case-and-spacing",
+      "activity": "quiz",
+      "answer": "The light reactions happen in the thylakoid membrane [1].\nVerdict: Partially Correct\n\nWhat else is missing from your answer?",
+      "expectedOutcome": "partially-correct"
+    },
+    {
+      "id": "quiz-malformed-verdict",
+      "activity": "quiz",
+      "malformed": true,
+      "answer": "Verdict: maybe\nYour project documents do not settle this one.",
+      "expectedOutcome": "uncertain"
+    },
+    {
+      "id": "quiz-missing-verdict-with-question",
+      "activity": "quiz",
+      "answer": "Close, but the notes say the energy ends up in glucose [1]. Which part was unclear?",
+      "expectedOutcome": "completed"
+    },
+    {
+      "id": "quiz-last-verdict-line-wins",
+      "activity": "quiz",
+      "answer": "Verdict: correct\nChecked again against the passage: it does not support that.\nVerdict: wrong.\n\nWhich line of the notes contradicts your answer?",
+      "expectedOutcome": "wrong"
+    },
+    {
+      "id": "explain-ungraded",
+      "activity": "explain",
+      "answer": "Photosynthesis converts sunlight into chemical energy stored in glucose [1]. Does that match what you expected?",
+      "expectedOutcome": "completed"
+    },
+    {
+      "id": "socratic-ungraded",
+      "activity": "socratic",
+      "answer": "Before I explain anything: what do you already know about how plants capture sunlight?",
+      "expectedOutcome": "completed"
+    },
+    {
+      "id": "teach-back-no-evidence-composed",
+      "activity": "teach-back",
+      "composeNoEvidence": true,
+      "answer": "Your reply names glucose as the product, which these documents do not cover.\nVerdict: uncertain.\n\nWhat in the documents supports that?",
+      "expectedOutcome": "uncertain"
+    }
+  ]
+}
