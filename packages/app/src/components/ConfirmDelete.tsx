@@ -2,20 +2,27 @@ import { useEffect, useRef } from "react";
 
 export type ConfirmDeleteProps = {
   open: boolean;
+  /** The item being deleted; it appears in the default title. */
   projectName: string;
   busy: boolean;
   error: string | null;
   onCancel: () => void;
   onConfirm: () => void | Promise<void>;
+  /** Copy overrides; the defaults describe S21 project deletion. */
+  description?: string;
+  keepLabel?: string;
+  confirmLabel?: string;
+  busyLabel?: string;
 };
 
 /**
  * Explicit, modal confirmation for a destructive delete. The native `<dialog>`
- * supplies focus trapping, Escape-to-close and `aria-modal`; "Keep project" is
- * focused first and the destructive button is last, so the safe choice is the
- * default one. The parent blocks closing while a delete is in flight.
+ * supplies focus trapping, Escape-to-close and `aria-modal`; the safe choice is
+ * focused first and the destructive button is last, so it is the default one.
+ * The parent blocks closing while a delete is in flight. S21 uses the project
+ * defaults; S22 passes document-specific copy for document deletion.
  */
-export function ConfirmDelete({ open, projectName, busy, error, onCancel, onConfirm }: ConfirmDeleteProps) {
+export function ConfirmDelete({ open, projectName, busy, error, onCancel, onConfirm, description, keepLabel, confirmLabel, busyLabel }: ConfirmDeleteProps) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const onCancelRef = useRef(onCancel);
   onCancelRef.current = onCancel;
@@ -43,6 +50,8 @@ export function ConfirmDelete({ open, projectName, busy, error, onCancel, onConf
   const requestCancel = () => {
     if (!busy) onCancel();
   };
+  const safeLabel = keepLabel ?? "Keep project";
+  const destructiveLabel = confirmLabel ?? "Delete project";
 
   return (
     <dialog
@@ -54,7 +63,9 @@ export function ConfirmDelete({ open, projectName, busy, error, onCancel, onConf
       aria-describedby="confirm-delete-description"
     >
       <h2 id="confirm-delete-title">Delete “{projectName}”?</h2>
-      <p id="confirm-delete-description">This permanently removes the project, its goals, sessions and messages. This can’t be undone.</p>
+      <p id="confirm-delete-description">
+        {description ?? "This permanently removes the project, its goals, sessions and messages. This can’t be undone."}
+      </p>
       {error !== null && (
         <p className="form-error" role="alert">
           {error}
@@ -62,10 +73,10 @@ export function ConfirmDelete({ open, projectName, busy, error, onCancel, onConf
       )}
       <div className="confirm-actions">
         <button type="button" className="button" onClick={requestCancel} disabled={busy} autoFocus>
-          Keep project
+          {safeLabel}
         </button>
         <button type="button" className="button button-danger" onClick={() => void onConfirm()} disabled={busy}>
-          {busy ? "Deleting…" : "Delete project"}
+          {busy ? (busyLabel ?? "Deleting…") : destructiveLabel}
         </button>
       </div>
     </dialog>
