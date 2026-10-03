@@ -1,6 +1,6 @@
 # S26 — v0.1 end-to-end release acceptance report
 
-**Story:** S26 / issue #30 · **Branch:** `feat/issue-30-release-acceptance` · **Base:** `origin/main` at `a85d65b` (S05…S25 plus #41 auth hardening merged) · **Date:** 2026-10-03
+**Story:** S26 / issue #30 · **Branch:** `feat/issue-30-release-acceptance` · **Base:** `origin/main` at `33b6fbc` (S05…S25, #41 auth hardening and #72 offline Vercel hosting merged) · **Date:** 2026-10-03
 
 This report is the S26 acceptance evidence: the full learner journey, both tutor
 modes, the two-user privacy matrix, failure recovery without duplicate rows,
@@ -22,10 +22,10 @@ no production code changes.**
 | --- | --- | --- |
 | S05, S17, S19, S20, S21, S22, S23, S24, S25 (BACKLOG) | ✅ closed, merged | PRs #37, #66, #53, #55, #45, #52, #44, #69, #70 |
 | #41 — Convex Auth hardening (PM-added) | ✅ **SATISFIED** — PR #71 merged, `main` = `a85d65b`; this branch merged it before the runs below | Negative-token tests across 13 `ctx.auth` functions + 5 HTTP routes (`packages/api/tests/auth-negative-tokens.test.ts`), 8-entry callback/redirect allowlist with foreign-origin rejection (`packages/api/tests/auth-callback.test.ts`), agent handshake binding guard with no email-only/user-ID-only binding (`packages/agent/tests/sessionEndpoint.test.ts`), ADR evidence table (`docs/adr/0004-authentication-method.md`) — all green in the `pnpm test` output below |
-| #38 — Vercel deploy (PM-added) | ⛔ **partially blocked** — offline config/docs in flight (separate worktree); secrets workflow + production deploy + live sign-in smoke require **owner authority** (`Missing environment variable JWT_PRIVATE_KEY` in production QA) | Recorded as a remaining gate, not passed |
+| #38 — Vercel deploy (PM-added) | ✅ **offline portion MERGED** (PR #72, `main` = `33b6fbc`) with **VERIFIED** preview evidence | Preview deployment `dpl_27dT47KjRD5UWS7E2Ft4z7GDDH4g` is READY and serves all six headers — CSP, `Permissions-Policy: microphone=(self)`, `X-Content-Type-Options: nosniff`, `Referrer-Policy`, `X-Frame-Options: DENY`, HSTS `max-age=31536000` — as fetched through the owner's Vercel connection. Issue #38 **REMAINS OPEN** on owner-authority gates: JWT_PRIVATE_KEY/JWKS secrets workflow, production promotion, live sign-in + no-secret-in-bundle smoke |
 | #67, #68 (auth error copy, sign-in/onboarding screen) | ℹ️ out of S26 scope, listed as follow-ups (order-40/41, milestone v0.2) | issue tracker |
 
-## Commands and outputs (this branch, post-#41 merge)
+## Commands and outputs (this branch, refreshed from `main` at `33b6fbc`)
 
 ```text
 $ pnpm lint
@@ -103,10 +103,16 @@ provider counts `transcriptions=2, speech=2, chat=3` — no duplicates.
 
 Test: `packages/app/tests/e2e-privacy-matrix.test.tsx` — **35/35 PASS**.
 One shared deployment seeds A's world once (project + ingested document +
-completed grounded turn + agent connection token). Every row below is an
-individual named test; **actual = expected on every row**. "Denied" means the
-typed non-enumerating error (`NOT_FOUND`/`UNAUTHENTICATED`/`404`) with zero
-provider calls and zero rows written unless stated.
+completed grounded turn + agent connection token). The **56 rows below map to
+35 named tests**: C1–C28 are one `test.each` test each (28 tests), while the
+other 28 rows are grouped assertions inside 7 named tests — U1–U4 (`UI
+surface…`), V1–V4 (`vector surface…`), H1–H3 (`file surface…`), S1–S4
+(`speech-HTTP surface…`), A1–A5 (`agent surface…`), T1–T5 (`cache/telemetry
+surface…`) and AD1–AD3 (`audio surface…`). **actual = expected on every row.**
+"Denied" means the typed non-enumerating error
+(`NOT_FOUND`/`UNAUTHENTICATED`/`404`) with zero provider calls — asserted on
+every Convex row — and no `tutorTurns`/`messages`/`citations` row written,
+unless stated.
 
 ### Surface: UI
 
@@ -135,7 +141,7 @@ provider calls and zero rows written unless stated.
 | C12 | `tutor.getTurn` | NOT_FOUND | ✅ |
 | C13 | `tutor.latestTurn` | NOT_FOUND | ✅ |
 | C14 | `tutor.cancelTurn` | NOT_FOUND | ✅ |
-| C15 | `tutor.runTurn` (action) | NOT_FOUND, 0 provider calls, 0 rows | ✅ |
+| C15 | `tutor.runTurn` (action) | NOT_FOUND, 0 provider calls, 0 rows | ✅ asserted: provider counts and `tutorTurns`/`messages`/`citations` unchanged (holds for every C row) |
 | C16 | `ingestion.listIngestionJobs` | NOT_FOUND | ✅ |
 | C17 | `agentSessions.issueConnectionToken` | NOT_FOUND | ✅ |
 | C18 | `agentSessions.revokeConnectionToken` (A's token id) | NOT_FOUND | ✅ |
@@ -199,7 +205,7 @@ one's instance at the gate" → 403 `AGENT_SCOPE_MISMATCH`,
 | T1 | B's denied STT + transcript attempts | 0 telemetry rows for `learner-b` | ✅ 0 rows |
 | T2 | rows keyed to A's project | all `ownerId: learner-a` | ✅ |
 | T3 | redaction canary (`what is photosynthesis`, answer text) | absent from every telemetry row | ✅ |
-| T4 | rate-limit buckets | none for B, never A's bucket | ✅ |
+| T4 | rate-limit buckets | owner-scoped: no shared or foreign bucket, and A's bucket never spent by B | ✅ every row keyed to `learner-a`/`learner-b` and carries no `projectId`; A's rows byte-identical before/after B's denials (B's own denials are charged only to B's bucket) |
 | T5 | public read surface for telemetry | none (source scan: module exports no public `query`/`mutation`/`action`) | ✅ |
 
 Cross-user rate-limit bucket isolation and the "denied even with a fresh
@@ -259,22 +265,35 @@ preview fixtures (synthetic data only; `vite build` strips them).
 
 | File | Viewport | What was inspected |
 | --- | --- | --- |
-| `journey-dashboard-desktop.png` / `-mobile.png` | 1280×1000 / 390×844 | dashboard with projects, modes badges, no overflow at 390 px |
-| `journey-documents-desktop.png` / `-mobile.png` | 1280×1000 / 390×844 | upload form + per-job badges (`Ready · 6 sections`, `Processing… (attempt 1 of 5)`, encrypted/failed states) |
+| `journey-dashboard-desktop.png` / `-mobile.png` | 1280×1000 / 390×844 | dashboard ("Your projects") with three project cards and their mode badges — `Language practice`, `Concept learning`, `Language practice` — no overflow at 390 px |
+| `journey-documents-desktop.png` / `-mobile.png` | 1280×1000 / 390×844 | upload form + the per-job badges actually in frame: `Ready · 6 sections`, `Processing… (attempt 1 of 5)` and (desktop) `Retrying… (attempt 2 of 5)` with the typed copy "We couldn't read this file. Retry, or delete it and upload a fixed copy."; the next card (`unit-7-scan.pdf`) starts at the viewport fold with its badge cut off, so the `Unsupported file · ENCRYPTED_PDF` label (the fixture's "encrypted" state) is **not** readable in either capture |
 | `journey-transcripts-citations-desktop.png` / `-mobile.png` | 1280×1000 / 390×844 (full page) | **learner transcript, tutor answer with `[1]`/`[2]` and citation links `1. Page 2`, `2. Practice routine`**, all five stages, Ready reached |
 | `journey-failure-recovery-desktop.png` / `-mobile.png` | 1280×1000 / 390×844 (full page) | failed stage (`Retrieving & generating — failed`), typed alert "The tutor timed out. Retry (starts a new turn) — no duplicate answer can be created.", Retry / Discard response, editable transcription |
 | `journey-citation-source-desktop.png` / `-mobile.png` | 1280×1000 / 390×844 | citation source viewer with cited chunk |
 
-Reproduce:
+Reproduce (the dev server must start with `VITE_CONVEX_URL` set — any value
+works — otherwise `main.tsx` renders its "VITE_CONVEX_URL is not configured"
+page for every non-preview route; the dashboard is captured through
+`#/preview/dashboard`, which mounts the fixture backend and lands on
+`#/projects` with projects and mode badges):
 
 ```sh
-pnpm --filter @learn-anything/app exec vite --port 5216 --strictPort &
+VITE_CONVEX_URL="https://example.invalid" \
+  pnpm --filter @learn-anything/app exec vite --port 5216 --strictPort &
 npx playwright screenshot --channel=chrome --viewport-size="1280,1000" --full-page \
   --wait-for-timeout=2500 "http://localhost:5216/#/preview/conversation-ready" \
   journey-transcripts-citations-desktop.png
-# 390,844 and the other routes: #/projects, #/preview/documents,
-# /preview/conversation-error, #/preview/source
+npx playwright screenshot --channel=chrome --viewport-size="1280,1000" \
+  --wait-for-timeout=3000 "http://localhost:5216/#/preview/dashboard" \
+  journey-dashboard-desktop.png
+# 390,844 and the other routes: #/preview/dashboard, #/preview/documents,
+# /preview/conversation-error, /preview/source
 ```
+
+The dashboard pair was regenerated on 2026-10-03 after review found the first
+capture showed the unconfigured-`VITE_CONVEX_URL` page instead of the
+dashboard; both images were reopened and inspected and show the "Your
+projects" dashboard described above.
 
 ### Microphone / playback probe (real browser)
 
