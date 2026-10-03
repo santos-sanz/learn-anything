@@ -259,13 +259,24 @@ export function captureHarness(options: { scheduleMaxMs?: number } = {}) {
  * Shared convex-test bindings for the S17 end-to-end suites
  * ------------------------------------------------------------------ */
 
+/**
+ * One scripted `/chat/completions` behaviour, consumed in order. `"ok"`
+ * streams the deterministic answer, `"rate-limit"` answers HTTP 429 with
+ * `Retry-After: 0`, and `"hang"` never settles so the client's own timeout
+ * signal wins. An empty queue behaves like an endless run of `"ok"`.
+ */
+export type ChatBehaviour = "ok" | "rate-limit" | "hang";
+
 /** Deterministic offline NaN answers: embeddings, SSE chat, Whisper, Kokoro. */
-export function installVoiceProviderMock() {
+export function installVoiceProviderMock(options: { chat?: readonly ChatBehaviour[] } = {}) {
   const counts = { embeddings: 0, chat: 0, transcriptions: 0, speech: 0 };
+  /** The exact system prompt of every chat call, for mode assertions. */
+  const chatSystems: string[] = [];
+  const chatQueue: ChatBehaviour[] = [...(options.chat ?? [])];
   const originalFetch = globalThis.fetch;
   globalThis.fetch = (async (input: unknown, init?: RequestInit) => {
     const url = String(input);
-    const body = typeof init?.body === "string" ? (JSON.parse(init.body) as { input?: unknown }) : null;
+    const body = typeof init?.body === "string" ? (JSON.parse(init.body) as { input?: unknown; messages?: Array<{ role: string; content: string }> }) : null;
     if (url.endsWith("/embeddings")) {
       counts.embeddings += 1;
       const texts = Array.isArray(body?.input) ? body.input : [];
@@ -276,6 +287,12 @@ export function installVoiceProviderMock() {
     }
     if (url.endsWith("/chat/completions")) {
       counts.chat += 1;
+      chatSystems.push(body?.messages?.find((message) => message.role === "system")?.content ?? "");
+      const behaviour = chatQueue.shift() ?? "ok";
+      if (behaviour === "rate-limit") {
+        return new Response(JSON.stringify({ error: { message: "synthetic rate limit" } }), { status: 429, headers: { "retry-after": "0" } });
+      }
+      if (behaviour === "hang") return new Promise<Response>(() => undefined);
       const encoder = new TextEncoder();
       const pieces = ANSWER.match(/.{1,16}/gs) ?? [];
       const stream = new ReadableStream<Uint8Array>({
@@ -301,6 +318,11 @@ export function installVoiceProviderMock() {
   }) as typeof globalThis.fetch;
   return {
     counts,
+    chatSystems,
+    /** Queue more chat behaviours after the ones installed at construction. */
+    queueChat(...behaviours: ChatBehaviour[]): void {
+      chatQueue.push(...behaviours);
+    },
     restore: () => {
       globalThis.fetch = originalFetch;
     },
@@ -313,7 +335,10 @@ export function installVoiceProviderMock() {
  * browser request would), the real `runTurn` action, and the scripted
  * microphone/player devices.
  */
-export function convexVoicePorts(a: { fetch: (path: string, init?: RequestInit) => Promise<Response> }) {
+export function convexVoicePorts(
+  a: { fetch: (path: string, init?: RequestInit) => Promise<Response> },
+  options: { capture?: Partial<TurnEnvironment> | undefined } = {},
+) {
   const guardedFetch = async (input: string, init?: RequestInit) => {
     const body = init?.body;
     const normalized = body instanceof Blob ? { ...init, body: new Uint8Array(await body.arrayBuffer()) } : init;
@@ -322,7 +347,7 @@ export function convexVoicePorts(a: { fetch: (path: string, init?: RequestInit) 
   const backend = makeConvexConversationBackend(a as unknown as Parameters<typeof makeConvexConversationBackend>[0]);
   const httpCapture = browserTurnEnvironment({ siteUrl: "", getToken: () => "synthetic-test-token", fetchImpl: guardedFetch });
   const device = captureHarness().env;
-  const capture: TurnEnvironment = { ...device, transcribe: httpCapture.transcribe, translateAudio: httpCapture.translateAudio };
+  const capture: TurnEnvironment = { ...device, ...options.capture, transcribe: options.capture?.transcribe ?? httpCapture.transcribe, translateAudio: options.capture?.translateAudio ?? httpCapture.translateAudio };
   const playbacks: FakePlayback[] = [];
   const playback: ResponsePlayerEnvironment = {
     fetchAudio: ({ projectId, turnId, language, voice, signal }) =>

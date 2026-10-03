@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, webcrypto } from "node:crypto";
 
 /**
  * jsdom's `Crypto` implements only `getRandomValues`/`randomUUID`, and on
@@ -10,6 +10,12 @@ import { createHash } from "node:crypto";
  * on the exposed object only when `subtle` is missing; environments that
  * already have WebCrypto are left untouched, and nothing here reaches the
  * network or reads configuration.
+ *
+ * The installed `subtle` also proxies every other WebCrypto operation
+ * (PBKDF2 `importKey`/`deriveBits`, …) to Node's own implementation, which
+ * the real Convex Auth password provider needs for credential hashing in
+ * jsdom; only `digest` stays realm-local, because Node's WebCrypto can
+ * reject jsdom-realm buffers there.
  */
 export function ensureSubtleCrypto(): void {
   const target = globalThis.crypto as { subtle?: unknown } | undefined;
@@ -22,11 +28,18 @@ export function ensureSubtleCrypto(): void {
     const hash = createHash("sha256").update(bytes).digest();
     return new Uint8Array(hash).buffer;
   };
+  const subtle = new Proxy(webcrypto.subtle, {
+    get(proxyTarget, property, receiver) {
+      if (property === "digest") return digest;
+      const value = Reflect.get(proxyTarget, property, receiver);
+      return typeof value === "function" ? (value as (...args: unknown[]) => unknown).bind(proxyTarget) : value;
+    },
+  });
   // Installed unconditionally: whether the exposed `subtle` is jsdom's
   // missing one or Node's (which can reject jsdom-realm buffers on some
   // runners), the syscall only ever asks for SHA-256.
   try {
-    Object.defineProperty(target, "subtle", { value: { digest }, configurable: true });
+    Object.defineProperty(target, "subtle", { value: subtle, configurable: true });
   } catch {
     // A frozen crypto object would already have failed the upload visibly.
   }
