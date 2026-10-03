@@ -155,7 +155,7 @@ type Claim = {
  * swept first: back to `queued` (ready, eligible now) while attempts remain,
  * otherwise to the `failed` dead letter with `LEASE_EXPIRED`. Rows written by
  * S08 without `nextAttemptAt` are still claimable through `by_status` until the
- * v5 backfill runs.
+ * v6 backfill runs.
  */
 export const claimNextJob = internalMutation({
   args: { workerId: v.string() },

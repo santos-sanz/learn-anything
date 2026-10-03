@@ -132,7 +132,7 @@ export default defineSchema({
    *
    * S09 adds lease/retry fields as optional, additive columns so an S08-era row
    * still validates: `nextAttemptAt`/`maxAttempts` are backfilled by the
-   * resumable v5 migration (rows missing `nextAttemptAt` are also claimable
+   * resumable v6 migration (rows missing `nextAttemptAt` are also claimable
    * through `by_status` until it runs), and an absent lease means idle.
    * `failed` is the dead letter; `unsupported` is the terminal state for
    * encrypted/scanned/unsupported inputs and is never retried.
