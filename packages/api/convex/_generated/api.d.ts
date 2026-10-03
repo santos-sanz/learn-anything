@@ -20,6 +20,7 @@ import type * as ingestion from "../ingestion.js";
 import type * as migrations from "../migrations.js";
 import type * as projects from "../projects.js";
 import type * as redirects from "../redirects.js";
+import type * as retrieval from "../retrieval.js";
 import type * as stt from "../stt.js";
 import type * as translation from "../translation.js";
 import type * as version from "../version.js";
@@ -43,6 +44,7 @@ declare const fullApi: ApiFromModules<{
   migrations: typeof migrations;
   projects: typeof projects;
   redirects: typeof redirects;
+  retrieval: typeof retrieval;
   stt: typeof stt;
   translation: typeof translation;
   version: typeof version;
