@@ -344,7 +344,7 @@ export const searchProjectVectors = action({
   },
 });
 
-function assertQueryVector(vector: number[]): void {
+export function assertQueryVector(vector: number[]): void {
   if (vector.length !== EMBEDDING_DIMENSIONS) {
     throw new ConvexError({ code: "VECTOR_DIMENSION_INVALID", expected: EMBEDDING_DIMENSIONS, actual: vector.length });
   }
