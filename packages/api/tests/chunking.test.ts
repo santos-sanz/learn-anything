@@ -1,11 +1,12 @@
 import { readFileSync } from "node:fs";
 
 import { convexTest } from "convex-test";
-import { expect, test } from "vitest";
+import { afterEach, beforeEach, expect, test } from "vitest";
 
 import { api, internal } from "../convex/_generated/api.js";
 import schema from "../convex/schema.js";
 import { installAuthTestEnv } from "./helpers/authEnv.js";
+import { installEmbeddingProvider } from "./helpers/embeddingProvider.js";
 
 // Deployment variables are synthetic for offline tests; no value is a secret.
 installAuthTestEnv();
@@ -15,12 +16,22 @@ const modules = {
   "../convex/agentSessions.ts": () => import("../convex/agentSessions.js"),
   "../convex/auth.ts": () => import("../convex/auth.js"),
   "../convex/documents.ts": () => import("../convex/documents.js"),
+  "../convex/embeddings.ts": () => import("../convex/embeddings.js"),
   "../convex/files.ts": () => import("../convex/files.js"),
   "../convex/http.ts": () => import("../convex/http.js"),
   "../convex/ingestion.ts": () => import("../convex/ingestion.js"),
   "../convex/projects.ts": () => import("../convex/projects.js"),
   "../convex/redirects.ts": () => import("../convex/redirects.js"),
 };
+
+// Cycles embed through the S12 provider path; the mock keeps them offline.
+let restoreEmbeddingProvider: () => void;
+beforeEach(() => {
+  restoreEmbeddingProvider = installEmbeddingProvider("a");
+});
+afterEach(() => {
+  restoreEmbeddingProvider();
+});
 
 const makeTest = () => convexTest({ schema, modules });
 type TestInstance = ReturnType<typeof makeTest>;
