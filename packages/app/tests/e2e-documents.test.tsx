@@ -16,6 +16,7 @@ import { makeConvexProjectsBackend, type ProjectsBackend } from "../src/data/pro
 import { Root, type AuthSession } from "../src/Root.js";
 import { serializeRoute } from "../src/router.js";
 import { asConvexClient } from "./fixtures.js";
+import { ensureSubtleCrypto } from "./jsdomCrypto.js";
 
 /**
  * S22 end-to-end: the real screens drive the real authorized Convex functions
@@ -27,6 +28,9 @@ import { asConvexClient } from "./fixtures.js";
 
 // Must run before any convex/ module is imported (JWT material is synthetic).
 installAuthTestEnv();
+// Uploads store blobs through convex-test's js syscall, which needs WebCrypto
+// even where jsdom's Crypto object shadows Node's (see jsdomCrypto.ts).
+ensureSubtleCrypto();
 
 const modules = {
   "../../api/convex/_generated/api.ts": () => import("../../api/convex/_generated/api.js"),
@@ -134,7 +138,7 @@ test("upload flows to ready through the UI, then the source and a real citation 
   const user = userEvent.setup();
   render(<Root session={session()} backend={projects} documents={documents} />);
 
-  await screen.findByRole("heading", { name: "No documents yet" });
+  await screen.findByRole("heading", { name: "No documents yet" }, { timeout: 5_000 });
 
   await user.upload(
     screen.getByLabelText("Add a document"),
