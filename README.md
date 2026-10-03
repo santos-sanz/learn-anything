@@ -40,7 +40,7 @@ flowchart TD
   T --> U
 ```
 
-Voice flow: **microphone -> STT -> scoped RAG -> LLM tutor -> TTS -> playback**. Transcripts are visible and editable before retry. Translation is explicit, not applied silently. Whisper's translation endpoint outputs English, so arbitrary translation between language pairs requires a separately tested LLM task.
+Voice flow: **microphone -> STT -> scoped RAG -> LLM tutor -> TTS -> playback**. Transcripts are visible and editable before retry. Translation is explicit, never applied silently: the learner chooses one of three actions — transcribe the speech, translate the audio to English, or translate text they already have into a selected target language — and a translation always appears next to the original text, which is never replaced. Whisper's translation endpoint outputs English only, so audio translation to any other target is refused with an actionable fallback to text translation instead of silently returning English; translation between language pairs is the separately tested LLM task, whose source text is sent as data rather than instructions.
 
 ## Project and data boundaries
 
