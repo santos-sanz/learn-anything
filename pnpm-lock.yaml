@@ -63,6 +63,9 @@ importers:
       '@learn-anything/shared':
         specifier: workspace:*
         version: link:../shared
+      '@learn-anything/worker':
+        specifier: workspace:*
+        version: link:../worker
       convex:
         specifier: 1.43.0
         version: 1.43.0(react@19.1.1)

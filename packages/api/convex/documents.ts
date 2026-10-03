@@ -2,6 +2,7 @@ import { ConvexError, v } from "convex/values";
 
 import type { Doc, Id } from "./_generated/dataModel";
 import { internalMutation, internalQuery, query, type MutationCtx } from "./_generated/server";
+import { configuredMaxAttempts } from "./ingestion";
 import { requireOwnedProject, requireUserId } from "./projects";
 
 /** Product upload cap (README/ADR-0002), below the 20 MiB Convex HTTP ceiling. */
@@ -218,7 +219,17 @@ export const assertUploadTarget = internalQuery({
 async function findOrCreateJob(ctx: MutationCtx, ownerId: string, projectId: Id<"projects">, documentId: Id<"documents">, now: number): Promise<Id<"ingestionJobs">> {
   const existing = await ctx.db.query("ingestionJobs").withIndex("by_document", (q) => q.eq("documentId", documentId)).unique();
   if (existing !== null) return existing._id;
-  return ctx.db.insert("ingestionJobs", { ownerId, projectId, documentId, status: "queued", attempts: 0, createdAt: now, updatedAt: now });
+  return ctx.db.insert("ingestionJobs", {
+    ownerId,
+    projectId,
+    documentId,
+    status: "queued",
+    attempts: 0,
+    maxAttempts: configuredMaxAttempts(),
+    nextAttemptAt: now,
+    createdAt: now,
+    updatedAt: now,
+  });
 }
 
 /**

@@ -23,6 +23,7 @@
     "@auth/core": "0.41.3",
     "@convex-dev/auth": "0.0.96",
     "@learn-anything/shared": "workspace:*",
+    "@learn-anything/worker": "workspace:*",
     "convex": "1.43.0"
   },
   "devDependencies": {
