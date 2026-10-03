@@ -3,6 +3,7 @@ import {
   CHUNK_SIZE_MIN,
   DEFAULT_CHUNK_CONFIG,
   MAX_DOCUMENT_CHUNKS,
+  NanAdapterError,
   contentVersionKeyFor,
   isUnsupportedParserCode,
   parseDocument,
@@ -14,6 +15,7 @@ import { ConvexError, v } from "convex/values";
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import { internalAction, internalMutation, internalQuery, query, type ActionCtx, type MutationCtx } from "./_generated/server";
+import { EMBEDDING_MODEL, embeddingBatches, embeddingClient } from "./embeddings";
 import { requireOwnedProject, requireUserId } from "./projects";
 
 /**
@@ -284,6 +286,11 @@ export const getJobContext = internalQuery({
  * contract version are replaced. Deliberately not lease-guarded: the content
  * hash of immutable bytes makes concurrent stale commits converge on the same
  * rows, while job-state transitions stay lease-guarded.
+ *
+ * The returned `chunks` list maps each committed seq to its row id, which is
+ * what the S12 embedding stage needs to store vectors against the exact rows
+ * this commit wrote (in input order, which the seq===index check keeps equal
+ * to seq order).
  */
 export const commitChunks = internalMutation({
   args: {
@@ -305,7 +312,11 @@ export const commitChunks = internalMutation({
       }),
     ),
   },
-  returns: v.object({ chunkCount: v.number(), fresh: v.number() }),
+  returns: v.object({
+    chunkCount: v.number(),
+    fresh: v.number(),
+    chunks: v.array(v.object({ seq: v.number(), chunkId: v.id("documentChunks") })),
+  }),
   handler: async (ctx, args) => {
     const job = await ctx.db.get(args.jobId);
     if (job === null || job.ownerId !== args.ownerId || job.projectId !== args.projectId || job.documentId !== args.documentId) {
@@ -320,7 +331,7 @@ export const commitChunks = internalMutation({
       if (args.chunks[index].seq !== index) throw new ConvexError({ code: "INVALID_ARGUMENT" });
     }
     const document = await ctx.db.get(job.documentId);
-    if (document === null || document.ownerId !== job.ownerId || document.projectId !== job.projectId) {
+    if (document === null || document.ownerId !== args.ownerId || document.projectId !== args.projectId) {
       throw new ConvexError({ code: "NOT_FOUND" });
     }
 
@@ -332,6 +343,7 @@ export const commitChunks = internalMutation({
 
     const now = Date.now();
     const byKey = new Map(existing.map((chunk) => [chunk.chunkKey, chunk]));
+    const committed: { seq: number; chunkId: Id<"documentChunks"> }[] = [];
     let fresh = 0;
     for (const chunk of args.chunks) {
       const chunkKey = `${args.contentVersionKey}#${chunk.seq}`;
@@ -344,9 +356,10 @@ export const commitChunks = internalMutation({
           found.locator.page === chunk.locator.page &&
           found.locator.heading === chunk.locator.heading;
         if (!identical) throw new ConvexError({ code: "CHUNK_CONFLICT" });
+        committed.push({ seq: chunk.seq, chunkId: found._id });
         continue;
       }
-      await ctx.db.insert("documentChunks", {
+      const chunkId = await ctx.db.insert("documentChunks", {
         ownerId: args.ownerId,
         projectId: args.projectId,
         documentId: args.documentId,
@@ -358,13 +371,67 @@ export const commitChunks = internalMutation({
         locator: chunk.locator,
         createdAt: now,
       });
+      committed.push({ seq: chunk.seq, chunkId });
       fresh += 1;
     }
     for (const chunk of existing) {
       if (chunk.contentVersionKey !== args.contentVersionKey) await ctx.db.delete(chunk._id);
     }
     if (job.contentVersionKey === undefined) await ctx.db.patch(job._id, { contentVersionKey: args.contentVersionKey });
-    return { chunkCount: args.chunks.length, fresh };
+    return { chunkCount: args.chunks.length, fresh, chunks: committed };
+  },
+});
+
+/**
+ * S12 stale-vector sweep over `by_document_version`: rows whose content
+ * version differs from the current one are deleted through the two key ranges
+ * (`<` and `>` the kept version). Every row inside those ranges is deletable
+ * by definition, so each call can take a bounded window, delete everything it
+ * took, and a re-call simply resumes at the range start — progress is
+ * guaranteed without a cursor. The call stops after `limit` rows so one
+ * transaction never reads more than `limit` 4096-float vectors (~3.2 MB at
+ * 100/32 KiB); the action loops until it reports `done`. Rows the loop has
+ * not reached yet are already harmless: `recheckSearchHits` drops them
+ * because their chunk row belongs to a superseded version.
+ */
+export const sweepStaleEmbeddings = internalMutation({
+  args: {
+    documentId: v.id("documents"),
+    contentVersionKey: v.string(),
+    limit: v.number(),
+  },
+  returns: v.object({ deleted: v.number(), done: v.boolean() }),
+  handler: async (ctx, args) => {
+    if (!Number.isInteger(args.limit) || args.limit < 1 || args.limit > 100) throw new ConvexError({ code: "INVALID_ARGUMENT" });
+    const below = () =>
+      ctx.db
+        .query("chunkEmbeddings")
+        .withIndex("by_document_version", (q) => q.eq("documentId", args.documentId).lt("contentVersionKey", args.contentVersionKey));
+    const above = () =>
+      ctx.db
+        .query("chunkEmbeddings")
+        .withIndex("by_document_version", (q) => q.eq("documentId", args.documentId).gt("contentVersionKey", args.contentVersionKey));
+    let deleted = 0;
+    let done = true;
+    for (const load of [below, above]) {
+      if (deleted >= args.limit) {
+        done = false;
+        break;
+      }
+      const requested = args.limit - deleted;
+      const rows = await load().take(requested);
+      for (const row of rows) {
+        await ctx.db.delete(row._id);
+        deleted += 1;
+      }
+      if (rows.length === requested) {
+        // A full window means this range may still hold stale rows; a re-call
+        // resumes at the range start because everything taken was deleted.
+        done = false;
+        break;
+      }
+    }
+    return { deleted, done };
   },
 });
 
@@ -505,7 +572,7 @@ async function executeClaim(ctx: ActionCtx, claim: Claim, workerId: string): Pro
       chunking: { size: configuredChunkSize(), overlap: configuredChunkOverlap() },
     });
     if (chunks.length === 0) return markUnsupportedOutcome(ctx, claim, workerId, "NO_EXTRACTABLE_TEXT");
-    await ctx.runMutation(internal.ingestion.commitChunks, {
+    const committed = await ctx.runMutation(internal.ingestion.commitChunks, {
       jobId: claim.jobId,
       documentId: claim.documentId,
       ownerId: claim.ownerId,
@@ -518,6 +585,19 @@ async function executeClaim(ctx: ActionCtx, claim: Claim, workerId: string): Pro
         locator: chunk.locator,
       })),
     });
+    // S12: superseded vectors are swept in bounded calls, then every chunk of
+    // this content version gets its full 4096-dimensional qwen3-embedding
+    // vector from the NaN adapter (batched to the documented provider limits)
+    // before the job is allowed to succeed — a document is never marked ready
+    // while its chunks are unsearchable. Every failure here is a visible typed
+    // job failureCode routed through the normal retry/dead-letter path.
+    await sweepStaleVectors(ctx, claim.documentId, contentVersionKey);
+    await embedAndCommitChunks(
+      ctx,
+      claim,
+      contentVersionKey,
+      chunks.map((chunk, index) => ({ chunkId: committed.chunks[index].chunkId, text: chunk.text })),
+    );
     await ctx.runMutation(internal.ingestion.completeJob, {
       jobId: claim.jobId,
       workerId,
@@ -530,6 +610,61 @@ async function executeClaim(ctx: ActionCtx, claim: Claim, workerId: string): Pro
     if (code !== null && isUnsupportedParserCode(code)) return markUnsupportedOutcome(ctx, claim, workerId, code);
     const failureCode = code ?? functionErrorCode(error) ?? "PARSE_FAILED";
     return recordFailureOutcome(ctx, claim, workerId, failureCode);
+  }
+}
+
+const EMBEDDING_SWEEP_BATCH = 100;
+const EMBEDDING_SWEEP_MAX_CALLS = 100;
+
+/** Bounded cleanup of vector rows whose content version was superseded. */
+async function sweepStaleVectors(ctx: ActionCtx, documentId: Id<"documents">, contentVersionKey: string): Promise<void> {
+  for (let call = 0; call < EMBEDDING_SWEEP_MAX_CALLS; call += 1) {
+    const result = await ctx.runMutation(internal.ingestion.sweepStaleEmbeddings, {
+      documentId,
+      contentVersionKey,
+      limit: EMBEDDING_SWEEP_BATCH,
+    });
+    if (result.done) return;
+  }
+  throw new ConvexError({ code: "EMBEDDING_SWEEP_OVERFLOW" });
+}
+
+/**
+ * The S12 NaN adapter call path: one client per job (the S11 personal-key
+ * policy gate still applies to the "embeddings" capability), contiguous
+ * batches sized to the documented 32-input/24,000-character provider limits,
+ * and one idempotent `commitEmbeddings` per batch. An adapter error is
+ * converted to its typed code so the job records it instead of a generic
+ * PARSE_FAILED, and a missing deployment key stops the job visibly with
+ * EMBEDDING_NOT_CONFIGURED rather than silently skipping retrieval setup.
+ */
+async function embedAndCommitChunks(
+  ctx: ActionCtx,
+  claim: Claim,
+  contentVersionKey: string,
+  refs: { chunkId: Id<"documentChunks">; text: string }[],
+): Promise<void> {
+  const client = embeddingClient(claim.ownerId);
+  if (client === null) throw new ConvexError({ code: "EMBEDDING_NOT_CONFIGURED" });
+  for (const batch of embeddingBatches(refs, (ref) => ref.text)) {
+    let vectors: number[][];
+    let model: string;
+    try {
+      ({ vectors, model } = await client.embeddings(batch.map((ref) => ref.text)));
+    } catch (error) {
+      if (error instanceof NanAdapterError) throw new ConvexError({ code: error.code });
+      throw error;
+    }
+    await ctx.runMutation(internal.embeddings.commitEmbeddings, {
+      jobId: claim.jobId,
+      documentId: claim.documentId,
+      ownerId: claim.ownerId,
+      projectId: claim.projectId,
+      contentVersionKey,
+      model: EMBEDDING_MODEL,
+      modelVersion: model,
+      vectors: batch.map((ref, index) => ({ chunkId: ref.chunkId, vector: vectors[index] })),
+    });
   }
 }
 

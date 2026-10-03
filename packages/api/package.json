@@ -27,7 +27,6 @@
     "convex": "1.43.0"
   },
   "devDependencies": {
-    "@edge-runtime/jest-environment": "4.0.0",
     "@edge-runtime/vm": "5.0.0",
     "convex-test": "0.0.60"
   }

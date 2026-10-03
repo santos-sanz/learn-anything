@@ -2,11 +2,12 @@ import { readFileSync, readdirSync } from "node:fs";
 
 import { contentVersionKeyFor, sha256Hex } from "@learn-anything/worker";
 import { convexTest } from "convex-test";
-import { expect, test } from "vitest";
+import { afterEach, beforeEach, expect, test } from "vitest";
 
 import { api, internal } from "../convex/_generated/api.js";
 import schema from "../convex/schema.js";
 import { installAuthTestEnv } from "./helpers/authEnv.js";
+import { embeddingResponse, installEmbeddingProvider, syntheticEmbeddingVector, SYNTHETIC_NAN_KEY } from "./helpers/embeddingProvider.js";
 
 // Deployment variables are synthetic for offline tests; no value is a secret.
 installAuthTestEnv();
@@ -16,12 +17,23 @@ const modules = {
   "../convex/agentSessions.ts": () => import("../convex/agentSessions.js"),
   "../convex/auth.ts": () => import("../convex/auth.js"),
   "../convex/documents.ts": () => import("../convex/documents.js"),
+  "../convex/embeddings.ts": () => import("../convex/embeddings.js"),
   "../convex/files.ts": () => import("../convex/files.js"),
   "../convex/http.ts": () => import("../convex/http.js"),
   "../convex/ingestion.ts": () => import("../convex/ingestion.js"),
   "../convex/projects.ts": () => import("../convex/projects.js"),
   "../convex/redirects.ts": () => import("../convex/redirects.js"),
 };
+
+// Every cycle now embeds through the S12 provider path: the key/deployer are
+// synthetic and fetch is stubbed so no test can reach the network.
+let restoreEmbeddingProvider: () => void;
+beforeEach(() => {
+  restoreEmbeddingProvider = installEmbeddingProvider("a");
+});
+afterEach(() => {
+  restoreEmbeddingProvider();
+});
 
 const makeTest = () => convexTest({ schema, modules });
 type TestInstance = ReturnType<typeof makeTest>;
@@ -73,6 +85,15 @@ async function chunkRows(t: TestInstance, documentId: string): Promise<Record<st
   return await t.run(async (ctx) =>
     ctx.db
       .query("documentChunks")
+      .withIndex("by_document", (q) => q.eq("documentId", documentId as never))
+      .collect(),
+  );
+}
+
+async function embeddingRows(t: TestInstance, documentId: string): Promise<Record<string, unknown>[]> {
+  return await t.run(async (ctx) =>
+    ctx.db
+      .query("chunkEmbeddings")
       .withIndex("by_document", (q) => q.eq("documentId", documentId as never))
       .collect(),
   );
@@ -308,6 +329,25 @@ test("running the same job twice yields byte-identical chunk rows", async () => 
   const rowsAfterSecond = await chunkRows(t, uploaded.documentId);
   expect(rowsAfterSecond).toEqual(rowsAfterFirst);
   expect(rowsAfterSecond.map((row) => row._id)).toEqual(rowsAfterFirst.map((row) => row._id));
+  // Embedding storage is idempotent too: the replay upserts the same rows
+  // keyed by chunk, never a second vector row.
+  const vectorsBeforeReplay = await embeddingRows(t, uploaded.documentId);
+  expect(vectorsBeforeReplay).toHaveLength(2);
+  await t.run(async (ctx) =>
+    ctx.db.patch(uploaded.jobId as never, {
+      status: "queued",
+      attempts: 0,
+      leaseOwner: undefined,
+      leaseExpiresAt: undefined,
+      nextAttemptAt: 0,
+      updatedAt: Date.now(),
+    }),
+  );
+  const third = await t.action(internal.ingestion.runIngestionCycle, { workerId: "worker-c" });
+  expect(third.outcomes).toEqual([{ jobId: uploaded.jobId, outcome: "succeeded" }]);
+  const vectorsAfterReplay = await embeddingRows(t, uploaded.documentId);
+  expect(vectorsAfterReplay).toHaveLength(2);
+  expect(vectorsAfterReplay.map((row) => row._id)).toEqual(vectorsBeforeReplay.map((row) => row._id));
   expect(await a.query(api.ingestion.listIngestionJobs, { projectId })).toMatchObject([{ status: "succeeded", chunkCount: 2 }]);
 });
 
@@ -401,4 +441,81 @@ test("runner configuration is validated and clamped instead of trusted", async (
       else process.env[name] = value;
     }
   }
+});
+
+test("a finished job stores full 4096-dimensional embedding rows with model metadata", async () => {
+  const t = makeTest();
+  const a = t.withIdentity(identity("a"));
+  const projectId = await a.mutation(api.projects.createProject, { name: "A" });
+  const uploaded = await uploadFixture(a, projectId, "text-page.pdf", "vec-key-0000001");
+
+  const cycle = await t.action(internal.ingestion.runIngestionCycle, { workerId: "worker-a" });
+  expect(cycle.outcomes).toEqual([{ jobId: uploaded.jobId, outcome: "succeeded" }]);
+
+  const rows = await embeddingRows(t, uploaded.documentId);
+  expect(rows).toHaveLength(2);
+  expect(rows.map((row) => row.seq)).toEqual([0, 1]);
+  for (const row of rows) {
+    expect(row.model).toBe("qwen3-embedding");
+    expect(row.modelVersion).toBe("qwen3-embedding");
+    expect(row.dimensions).toBe(4096);
+    expect(row.scopeKey).toBe(`a:${projectId}`);
+    expect((row.embedding as number[]).length).toBe(4096);
+    expect((row.embedding as number[]).every((value) => Number.isFinite(value))).toBe(true);
+  }
+  // The stored vectors are exactly what the adapter returned, at full width.
+  expect(rows[0].embedding).toEqual(syntheticEmbeddingVector(1));
+  expect(rows[1].embedding).toEqual(syntheticEmbeddingVector(2));
+});
+
+test("without a server-side NaN key the embedding stage fails visibly instead of skipping", async () => {
+  delete process.env.NAN_API_KEY;
+  try {
+    const t = makeTest();
+    const a = t.withIdentity(identity("a"));
+    const projectId = await a.mutation(api.projects.createProject, { name: "A" });
+    const uploaded = await uploadFixture(a, projectId, "text-page.pdf", "nokey-00000001");
+
+    const cycle = await t.action(internal.ingestion.runIngestionCycle, { workerId: "worker-a" });
+    expect(cycle.outcomes).toEqual([{ jobId: uploaded.jobId, outcome: "retry_scheduled" }]);
+    const job = await jobRow(t, uploaded.jobId);
+    expect(job).toMatchObject({ status: "queued", attempts: 1, failureCode: "EMBEDDING_NOT_CONFIGURED" });
+    expect(await chunkRows(t, uploaded.documentId)).toHaveLength(2);
+    expect(await embeddingRows(t, uploaded.documentId)).toHaveLength(0);
+  } finally {
+    process.env.NAN_API_KEY = SYNTHETIC_NAN_KEY;
+  }
+});
+
+test("a learner who is not the deployer never reaches the personal NaN key for embeddings", async () => {
+  const t = makeTest();
+  const b = t.withIdentity(identity("b"));
+  const projectId = await b.mutation(api.projects.createProject, { name: "B" });
+  const uploaded = await uploadFixture(b, projectId, "text-page.pdf", "policy-00000001");
+
+  const cycle = await t.action(internal.ingestion.runIngestionCycle, { workerId: "worker-a" });
+  expect(cycle.outcomes).toEqual([{ jobId: uploaded.jobId, outcome: "retry_scheduled" }]);
+  const job = await jobRow(t, uploaded.jobId);
+  expect(job).toMatchObject({ status: "queued", attempts: 1, failureCode: "NAN_POLICY_BLOCKED" });
+  expect(await embeddingRows(t, uploaded.documentId)).toHaveLength(0);
+});
+
+test("a provider response with the wrong vector width is rejected before storage", async () => {
+  globalThis.fetch = (async (input: unknown, init?: RequestInit) => {
+    const url = String(input);
+    if (!url.endsWith("/embeddings")) throw new Error(`unexpected provider call: ${url}`);
+    const body = JSON.parse(String(init?.body)) as { input: unknown };
+    return embeddingResponse(body.input, 2048);
+  }) as typeof globalThis.fetch;
+
+  const t = makeTest();
+  const a = t.withIdentity(identity("a"));
+  const projectId = await a.mutation(api.projects.createProject, { name: "A" });
+  const uploaded = await uploadFixture(a, projectId, "text-page.pdf", "width-00000001");
+
+  const cycle = await t.action(internal.ingestion.runIngestionCycle, { workerId: "worker-a" });
+  expect(cycle.outcomes).toEqual([{ jobId: uploaded.jobId, outcome: "retry_scheduled" }]);
+  const job = await jobRow(t, uploaded.jobId);
+  expect(job).toMatchObject({ status: "queued", attempts: 1, failureCode: "NAN_MALFORMED_RESPONSE" });
+  expect(await embeddingRows(t, uploaded.documentId)).toHaveLength(0);
 });

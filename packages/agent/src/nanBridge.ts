@@ -46,7 +46,7 @@ export function createNanBridge(env: NanBridgeEnv, context: NanBridgeContext, fe
   return {
     tutor: (text: string) => client.tutor([...messages, { role: "user", content: text }]),
     speech: (text: string) => client.speech(text),
-    embeddings: (inputs: string[]) => client.embeddings(inputs),
+    embeddings: async (inputs: string[]) => (await client.embeddings(inputs)).vectors,
     rerank: (query: string, documents: string[]) => client.rerank(query, documents),
   };
 }
