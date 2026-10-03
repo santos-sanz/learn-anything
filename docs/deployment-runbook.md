@@ -25,7 +25,20 @@ It is **not** authority to provision anything. It does not create accounts,
 deployments, Workers, secrets, DNS, payment methods or paid resources; every
 command that touches a live deployment is marked *(live)* and runs only when a
 separate, explicit authorization exists. Commands marked *(offline)* run with
-no credentials, no network and synthetic/fake values only.
+no credentials and synthetic/fake values only, and never authenticate against
+or write to a deployment: `wrangler deploy --dry-run` reads and validates the
+committed `wrangler.json`, bundles with the installed toolchain, prints the
+binding table and exits before anything is uploaded — no upload, no asset
+sync, no Durable-Object migration lookup. With no account id in play (this
+repository's `wrangler.json` carries no `account_id`, and the offline block
+does not set `CLOUDFLARE_ACCOUNT_ID`) it also makes no Cloudflare API call at
+all; if an account id *is* configured, wrangler first reads the current
+deployment's versions from the Cloudflare API, which needs credentials. These
+commands are **not** guaranteed to be network-free: wrangler still posts its
+anonymous usage metrics to `sparrow.cloudflare.com` unless telemetry is
+disabled, so set `WRANGLER_SEND_METRICS=false` (or run
+`wrangler telemetry disable`) before an offline rehearsal on a machine that
+must send nothing at all.
 
 ## 1. Deployment boundary: Cloudflare hosts agents only
 
@@ -85,8 +98,14 @@ Rules:
 3. Staging exists so that migration, health-check and rollback drills
    (Sections 6–9) can be exercised before production.
 4. Deployment references (`dev`, `staging`, `prod`, deployment names) are
-   confirmed per project with `npx convex deployment` *(live)* at
-   provisioning time; this runbook does not assume which ones already exist.
+   verified per project at provisioning time with a command that actually
+   resolves them: `npx convex env list --deployment <ref>` *(live)* lists
+   that deployment's environment variables when `<ref>` exists and errors
+   instead of listing when it does not (the Convex dashboard's Deployments
+   page shows the same). A bare `npx convex deployment` only prints the
+   subcommand usage (`select`, `create`, `token`, `usage`, `usage-limits`)
+   and confirms nothing about the project. This runbook does not assume
+   which references already exist.
 5. `convex deploy` has **no** `--prod`/`--deployment` flag (verified on the
    pinned CLI): the target comes from `CONVEX_DEPLOYMENT` /
    `CONVEX_DEPLOY_KEY` / the selected deployment. Always confirm the target
@@ -461,8 +480,8 @@ The only way into a Durable Object (`docs/adr/0004`,
    stored.
 2. `POST /agent/session { token, reconnect? }` on the agent Worker verifies
    it against the Convex deployment (`/agent/connection-tokens/verify`, or
-   `/reconnect` which rotates it) and returns the owner-scoped `instanceId`
-   and `connectPath`.
+   `/agent/connection-tokens/reconnect` which rotates it) and returns the
+   owner-scoped `instanceId` and `connectPath`.
 3. `onBeforeConnect` / `onBeforeRequest` re-verify before any Durable Object
    is created, check `HMAC(AGENT_BRIDGE_SECRET, ownerId + projectId)` equals
    the requested instance name, strip client-supplied bridge/authorization
@@ -495,7 +514,7 @@ recorded in the issue, with the failing output attached.
 | G5 | Convex compatibility *(live)* | `npx convex run internal.migrations.checkCompatibility '{}'` | `compatible: true`, `foundSchemaVersion: 12`, `expectedSchemaVersion: 12` | **Stop.** Run the current marker (Section 5.2), re-check; if still false, do not serve the new release |
 | G6 | Anonymous access is denied *(live)* | `npx convex run projects.listProjects '{}'` | fails with `UNAUTHENTICATED` and returns no project data | **Stop.** Authorization regression: do not release (never weaken S05/S06 to pass) |
 | G7 | Private file anonymous denial *(live)* | `curl -s -o /dev/null -w '%{http_code}\n' https://<deployment>.convex.site/private-files/fake-id` | `401` | **Stop.** Same reason as G6 |
-| G8 | Agent gate closed *(live)* | `curl -s -X POST https://<worker>.workers.dev/agent/session -H 'content-type: application/json' -d '{}'` | a typed JSON error (`AGENT_BAD_MESSAGE` 400 / `AGENT_TOKEN_MISSING` 401 / `AGENT_NOT_CONFIGURED` 503) — **never** `200`, never an `instanceId`/`connectPath` | **Stop.** A session path without a Convex-verified token is a boundary breach |
+| G8 | Agent gate closed *(live)* | `curl -s -X POST https://<worker>.workers.dev/agent/session -H 'content-type: application/json' -d '{}'` | a typed JSON error: `AGENT_BAD_MESSAGE` 400 (the `{}` body carries no token) or `AGENT_NOT_CONFIGURED` 503 (Worker without `AGENT_BRIDGE_SECRET`) — **never** `200`, never an `instanceId`/`connectPath`. `AGENT_TOKEN_MISSING` 401 is **not** reachable on this probe: it is raised by the instance-route gate (`packages/agent/src/gate.ts`), while `POST /agent/session` rejects a tokenless body before it calls Convex (`packages/agent/src/sessionEndpoint.ts`) | **Stop.** A session path without a Convex-verified token is a boundary breach |
 | G9 | Free-plan posture *(live)* | Cloudflare dashboard plan = Free; Convex dashboard plan = Free; `npx convex deployment usage-limits list --prod`; `grep -E '"plan"\|"account_id"' packages/agent/wrangler.json` | plans are Free, limits configured per Section 4.2, grep prints nothing | **Stop.** Do not release against an unexpected plan; investigate before continuing |
 | G10 | Config review test in CI | part of G1 (`packages/agent/tests/config.test.ts`, `packages/app/tests/no-provider-secrets.test.ts`) | passes | **Stop** |
 
@@ -519,8 +538,11 @@ under deployment authority; this issue did not run them (no live calls).
 
 A complete, provider-free rehearsal of the configuration surface. It reads
 only committed files, builds with **fake** coordinates and prints `OK`/`FAIL`.
-No command below contacts a provider, provisions anything or needs a
-credential. Recorded output from this PR follows the block.
+No command below needs a credential, provisions anything, or writes to a
+deployment. Outbound traffic is limited to wrangler's anonymous usage metrics,
+plus a read-only lookup of an existing deployment if an account id happens to
+be present in the shell (Section 0). Recorded output from this PR follows the
+block.
 
 ```sh
 set -e
@@ -795,7 +817,7 @@ inserts a secret, activates production or contacts a provider.
 | 4b | Failed health checks block release | Section 6 gate table, stop criteria | G1–G10 with commands and pass criteria; explicit "blocks release" rule |
 | 5 | Restricted single-user deployment precedes any multiuser provider launch | Section 10 ordered steps 1–6 and the blocked-until list | Order is sequential and gated; multiuser stays blocked with named prerequisites |
 | 6 | Recovery: migration failed midway, half-updated deployment, rollback incl. impossible cases | Section 9.1, 9.2, 9.3, 9.4 | Rerun-until-`completed`, per-surface recovery, explicit impossible-rollback path |
-| Test evidence | Deploy dry-run/config validation with fake values; runbook review | Section 7 (offline block + recorded output) and this table | Dry-run prints `OK` on every step without any provider contact |
+| Test evidence | Deploy dry-run/config validation with fake values; runbook review | Section 7 (offline block + recorded output) and this table | Dry-run prints `OK` on every step from committed files; it never writes to a deployment (Section 0 documents the one ancillary network path) |
 
 ## 12. Operational limits and known gaps of this runbook
 
@@ -808,7 +830,10 @@ inserts a secret, activates production or contacts a provider.
 - **Frontend hosting is undecided** (ADR-0001), so Section 2 names the
   frontend as "any static/CDN host" and cache-purge steps are host-dependent.
 - **Staging deployment reference** must be confirmed per Convex project
-  (`npx convex deployment` *(live)*); this runbook does not create one.
+  (`npx convex env list --deployment staging` *(live)* lists that
+  deployment's variables when the reference exists, and errors instead of
+  listing when it does not; the dashboard shows the same); this runbook
+  does not create one.
 - **Alerts:** `usage-limits --type warning`/`disable` plus the dashboard notification
   surface plus an operator-owned monthly check are the three alert paths; the
   dashboard surface is marked "verify at provisioning" rather than assumed.
