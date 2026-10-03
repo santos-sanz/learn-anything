@@ -213,11 +213,11 @@ scope, not per-tenant billing. The benchmark corpus was 550 synthetic
 ### Migration and rollback
 
 Schema/function version 7 adds only the new (initially empty) `chunkEmbeddings`
-table and index; `bootstrapSchemaV7` is a marker-only adoption that keeps the
-idempotent `nextAttemptAt` backfill for pre-v6 deployments. The dev deployment
-currently reports `foundSchemaVersion: null`, so run
-`npx convex run internal.migrations.bootstrapSchemaV7 '{}'` after deploying this
-release to make `checkCompatibility` pass. Rollback is a code rollback: older
+table and index; its marker migration is an adoption that keeps the idempotent
+`nextAttemptAt` backfill for pre-v6 deployments. The dev deployment currently
+reports `foundSchemaVersion: null`, so run the current marker
+(`npx convex run internal.migrations.bootstrapSchemaV9 '{}'`, see S22 below)
+after deploying to make `checkCompatibility` pass. Rollback is a code rollback: older
 releases ignore the new table, no rows carry old-only data, and no backfill has
 to be reversed; the vector index can be removed by pushing a schema without it
 once no release queries it.
@@ -285,6 +285,98 @@ The answer is consumed through the S11 `streamTutor` (provider streaming, `strea
 ### Offline test evidence
 
 `packages/api/tests/tutor.test.ts` (10 tests) drives the whole action with a mocked NaN `fetch`: document-backed turns (stored messages, citations, system prompt, transcript render), the no-evidence path (explicit `NO_EVIDENCE_STATEMENT` + guidance + `EMPTY_CORPUS`), the injection fixture (system byte-identical across hostile/benign documents, document text only inside the JSON envelope, fabricated markers never stored, foreign project unreachable), write-time citation rejection (foreign, not-retrieved, duplicate, vanished chunk → typed codes with no partial write, then a clean commit), idempotent retries under one `turnId` (three calls, one message set, one provider request), cancellation (in-flight abort, `TURN_IN_PROGRESS` for a concurrent duplicate, zero messages, idempotent cancel semantics), two-user/two-project isolation (no rows, no provider calls, own-chunks-only citations), provider retry/exhaustion/missing-key failures with visible codes, and rendering-side re-validation. `packages/worker/tests/tutor-prompt.test.ts` (5 tests) covers prompt purity, envelope round-trip, marker extraction and the composed disclosure; `packages/worker/tests/tutor-turn.test.ts` (10 tests) covers the retry/cancellation/bounding policy and a mocked SSE stream through the real adapter. No live NaN/LLM call exists anywhere in `pnpm test`.
+
+## S22 document management and citation source viewer
+
+### Schema/function version 9 and migration
+
+Version 8 adds two purely additive structures: `documents.deletedAt`
+(`v.optional(v.number())`, absent on every live row) as the document deletion
+tombstone, and the `documentChunks.by_document_seq` index the source viewer
+uses to load a cited chunk's bounded neighbours. No existing row is touched,
+so the migration is marker-only: `bootstrapSchemaV9` adopts any older
+deployment in place and keeps the idempotent `nextAttemptAt` backfill so a
+pre-v6 deployment is not skipped. Run
+`npx convex run internal.migrations.bootstrapSchemaV9 '{}'` after deploying
+this release; `checkCompatibility` then reports `foundSchemaVersion: 9`.
+Rollback is a code rollback while no tombstones exist — older releases ignore
+the optional field and never query the new index. A populated v8 deployment
+that keeps tombstones should stay on a compatible release: pre-S22 code does
+not filter `deletedAt`, so it would list a tombstone as a pending document.
+As with S13, the `sources` module entry in `convex/_generated/api.d.ts` is
+maintained by hand because offline `npx convex codegen` needs a configured
+deployment.
+
+### Public surface
+
+- `documents.listDocumentStatuses` (query) joins each **live** document with
+  its S09 job row (`status`, `attempts`, `maxAttempts`, `failureCode`,
+  `nextAttemptAt`, `chunkCount`), bounded to the 200 most recent documents per
+  project; tombstones are excluded, so the screen's badges are the real job
+  state rather than an optimistic copy. `UNAUTHENTICATED` without identity,
+  `NOT_FOUND` for a project the caller does not own.
+- `documents.retryDocument` (mutation) re-arms a dead-lettered `failed` job
+  (attempt budget reset to 0, `nextAttemptAt = now`, document back to
+  `pending`) and is a **no-op** for `queued`/`running`/`succeeded`, so a double
+  click or replayed request never creates a second job — `findOrCreateJob`'s
+  `by_document` uniqueness is the underlying guard. `unsupported` is terminal
+  by the S09 contract and returns `RETRY_NOT_ALLOWED`; a foreign, unknown or
+  tombstoned document returns `NOT_FOUND`.
+- `documents.deleteDocumentBatch` (mutation) mirrors the S04 two-phase
+  protocol with `limit` ≤ 100: the first call stamps the tombstone and flips
+  the document to `pending` (hiding it from every read surface and stopping a
+  late settle from resurrecting it); each batch deletes the **job first** (an
+  in-flight run then aborts before it can recreate chunks), then embeddings,
+  then chunks, all through `by_document` indexes; only when none remain are
+  the `privateFiles` row and the stored blob removed. The empty tombstone row
+  stays so an already-issued citation resolves to the explicit
+  `document-deleted` state, and it is swept with the project. Completion is
+  reported as `{ completed: true }`; a repeat call is an idempotent no-op, and
+  a foreign/unknown id is `NOT_FOUND`.
+- `sources.getCitationSource` (query) takes `projectId`, `documentId` and an
+  optional citation anchor (`chunkId`, `contentHash`) and returns either
+  `{ status: "ok", document, focus, before, after }` (focus carries the chunk
+  text, `seq`, `page`, `heading`, `contentHash`; neighbours are ≤3 chunks
+  before and ≤3 after, or the first chunk plus ≤5 ahead when opened without an
+  anchor) or `{ status: "unavailable", reason, document, source }` with S13's
+  exact missing-source reasons: `document-deleted` (owned tombstone),
+  `chunk-deleted`, `document-not-ready`, `content-version-mismatch`.
+  Ordering is deliberate: authentication → project ownership → document
+  ownership (a foreign or unknown id is the same non-enumerating `NOT_FOUND`
+  as S05/S08, so ownership probing cannot enumerate anyone's documents) →
+  tombstone → chunk resolution (a foreign chunk id answers identically to a
+  missing one, with no locator or text) → cited-hash freshness → readiness.
+  No `storage.getUrl`, no storage/file ids and no bytes ever leave the query:
+  the viewer reads the caller's own `documentChunks` rows, and original bytes
+  stay behind the authenticated `/private-files/:fileId` action.
+
+### Deletion and stale citations
+
+Deleting a document removes its job, embedding vectors, chunk rows, private
+file row and stored blob within the bounded loop, then leaves only the
+tombstone. Retrieval never offers the deleted source again (its vectors are
+gone), and opening an old citation link returns the explicit unavailable
+panel — never a broken link, crash or silent empty panel. While cleanup is in
+flight the tombstone's `pending` status makes any surviving vector classify as
+`document-not-ready` under S13, so a half-deleted document can never surface
+as a citation.
+
+### App surface and limits
+
+Hash routes `#/projects/:id/documents` and
+`#/projects/:id/sources/:documentId[/:chunkId][?hash=…]`. The list re-polls
+every 1.5 s **only while a job is live**, then stops; upload reuses one
+client-generated idempotency key per selected file; deletion drives the
+bounded loop with the same 100×50 caps as project deletion and surfaces an
+exhausted cap as `DELETION_INCOMPLETE`. Deliberate limits: extracted source
+text with page/heading anchors rather than rendered PDF pages; no in-app file
+download (that would need a tokenised request and is out of scope); the
+`#/preview/*` fixtures are `import.meta.env.DEV`-only and stripped from
+production builds. Evidence: `packages/api/tests/document-management.test.ts`
+(12), `packages/api/tests/citation-source.test.ts` (7),
+`packages/app/tests/e2e-documents.test.tsx` (3, upload-to-ready, citation
+access-denied, deletion cleanup) plus component tests, and screenshots in
+`docs/evidence/s22/`.
 
 ## Plan and operational limits
 
