@@ -1,8 +1,8 @@
 import { ConvexError, v } from "convex/values";
 
 import type { Doc, Id } from "./_generated/dataModel";
-import { internalMutation, internalQuery, query, type MutationCtx } from "./_generated/server";
-import { configuredMaxAttempts } from "./ingestion";
+import { internalMutation, internalQuery, mutation, query, type MutationCtx } from "./_generated/server";
+import { configuredMaxAttempts, jobStatusResult, toJobStatus } from "./ingestion";
 import { requireOwnedProject, requireUserId } from "./projects";
 
 /** Product upload cap (README/ADR-0002), below the 20 MiB Convex HTTP ceiling. */
@@ -181,7 +181,7 @@ function toDocumentStatus(document: Doc<"documents">) {
   };
 }
 
-/** Lists one owner's document status rows for a project they own. */
+/** Lists one owner's live document status rows for a project they own. */
 export const listDocuments = query({
   args: { projectId: v.id("projects") },
   returns: v.array(documentStatusResult),
@@ -189,11 +189,11 @@ export const listDocuments = query({
     const ownerId = await requireUserId(ctx);
     await requireOwnedProject(ctx, ownerId, args.projectId);
     const documents = await ctx.db.query("documents").withIndex("by_owner_project", (q) => q.eq("ownerId", ownerId).eq("projectId", args.projectId)).order("desc").collect();
-    return documents.map(toDocumentStatus);
+    return documents.filter(isLiveDocument).map(toDocumentStatus);
   },
 });
 
-/** Returns one document's status; foreign or unknown ids are non-enumerating NOT_FOUND. */
+/** Returns one document's status; foreign, deleted or unknown ids are non-enumerating NOT_FOUND. */
 export const getDocument = query({
   args: { projectId: v.id("projects"), documentId: v.id("documents") },
   returns: documentStatusResult,
@@ -201,10 +201,15 @@ export const getDocument = query({
     const ownerId = await requireUserId(ctx);
     await requireOwnedProject(ctx, ownerId, args.projectId);
     const document = await ctx.db.get(args.documentId);
-    if (document === null || document.ownerId !== ownerId || document.projectId !== args.projectId) throw new ConvexError({ code: "NOT_FOUND" });
+    if (document === null || document.ownerId !== ownerId || document.projectId !== args.projectId || !isLiveDocument(document)) throw new ConvexError({ code: "NOT_FOUND" });
     return toDocumentStatus(document);
   },
 });
+
+/** A row the S22 cleanup has tombstoned: invisible to every read surface. */
+function isLiveDocument(document: Doc<"documents">): boolean {
+  return document.deletedAt === undefined;
+}
 
 /** The upload action's ownership pre-check; it runs before any byte is saved. */
 export const assertUploadTarget = internalQuery({
@@ -261,8 +266,11 @@ export const commitDocumentUpload = internalMutation({
   handler: async (ctx, args) => {
     const now = Date.now();
     await requireOwnedProject(ctx, args.ownerId, args.projectId);
-    const existing = await ctx.db.query("documents").withIndex("by_owner_project_idempotency", (q) => q.eq("ownerId", args.ownerId).eq("projectId", args.projectId).eq("idempotencyKey", args.idempotencyKey)).unique();
-    if (existing !== null) {
+    // Newest row first: a replayed upload resolves to the live document, while
+    // an idempotency key whose document was deleted (its tombstone keeps the
+    // key) simply falls through to a fresh commit instead of resurrecting it.
+    const existing = await ctx.db.query("documents").withIndex("by_owner_project_idempotency", (q) => q.eq("ownerId", args.ownerId).eq("projectId", args.projectId).eq("idempotencyKey", args.idempotencyKey)).order("desc").first();
+    if (existing !== null && isLiveDocument(existing)) {
       return {
         documentId: existing._id,
         privateFileId: existing.privateFileId,
@@ -300,5 +308,151 @@ export const commitDocumentUpload = internalMutation({
       sizeBytes: args.sizeBytes,
       duplicate: false,
     };
+  },
+});
+
+/**
+ * S22 document management list: each live document joined with its S09 job, so
+ * the UI renders the REAL ingestion state (queued/running/succeeded/failed/
+ * unsupported with attempts, backoff and chunk count) instead of an optimistic
+ * copy. Bounded to the most recent `DOCUMENT_LIST_LIMIT` rows per project so
+ * one query never scans unboundedly; tombstoned rows are excluded.
+ */
+export const DOCUMENT_LIST_LIMIT = 200;
+
+const documentStatusEntry = v.object({ document: documentStatusResult, job: v.union(v.null(), jobStatusResult) });
+
+export const listDocumentStatuses = query({
+  args: { projectId: v.id("projects") },
+  returns: v.array(documentStatusEntry),
+  handler: async (ctx, args) => {
+    const ownerId = await requireUserId(ctx);
+    await requireOwnedProject(ctx, ownerId, args.projectId);
+    const documents = await ctx.db.query("documents").withIndex("by_owner_project", (q) => q.eq("ownerId", ownerId).eq("projectId", args.projectId)).order("desc").take(DOCUMENT_LIST_LIMIT);
+    const defaultMaxAttempts = configuredMaxAttempts();
+    const entries: { document: ReturnType<typeof toDocumentStatus>; job: ReturnType<typeof toJobStatus> | null }[] = [];
+    for (const document of documents) {
+      if (!isLiveDocument(document)) continue;
+      const job = await ctx.db.query("ingestionJobs").withIndex("by_document", (q) => q.eq("documentId", document._id)).first();
+      entries.push({ document: toDocumentStatus(document), job: job === null ? null : toJobStatus(job, defaultMaxAttempts) });
+    }
+    return entries;
+  },
+});
+
+/**
+ * S22 safe retry: re-arms a dead-lettered (`failed`) job by resetting its
+ * attempt budget and returning it to `queued`, and does nothing at all for a
+ * job that is already queued, running or succeeded — so a double click or a
+ * replayed request can never create a second job or duplicate work
+ * (`findOrCreateJob`'s `by_document` uniqueness is the underlying guard).
+ * `unsupported` is terminal by the S09 contract (the same input would fail the
+ * same way) and is rejected with a typed `RETRY_NOT_ALLOWED` instead of being
+ * silently retried or silently ignored.
+ */
+export const retryDocument = mutation({
+  args: { projectId: v.id("projects"), documentId: v.id("documents") },
+  returns: v.object({ retried: v.boolean(), job: jobStatusResult }),
+  handler: async (ctx, args) => {
+    const ownerId = await requireUserId(ctx);
+    await requireOwnedProject(ctx, ownerId, args.projectId);
+    const document = await ctx.db.get(args.documentId);
+    if (document === null || document.ownerId !== ownerId || document.projectId !== args.projectId || !isLiveDocument(document)) throw new ConvexError({ code: "NOT_FOUND" });
+    const now = Date.now();
+    const jobId = await findOrCreateJob(ctx, ownerId, args.projectId, document._id, now);
+    const job = await ctx.db.get(jobId);
+    if (job === null) throw new ConvexError({ code: "NOT_FOUND" });
+    if (job.status === "unsupported") throw new ConvexError({ code: "RETRY_NOT_ALLOWED" });
+    if (job.status !== "failed") return { retried: false, job: toJobStatus(job, configuredMaxAttempts()) };
+    await ctx.db.patch(job._id, {
+      status: "queued",
+      attempts: 0,
+      maxAttempts: configuredMaxAttempts(),
+      failureCode: undefined,
+      leaseOwner: undefined,
+      leaseExpiresAt: undefined,
+      nextAttemptAt: now,
+      chunkCount: undefined,
+      updatedAt: now,
+    });
+    await ctx.db.patch(document._id, { status: "pending", failureCode: null, updatedAt: now });
+    const refreshed = await ctx.db.get(job._id);
+    return { retried: true, job: toJobStatus(refreshed ?? job, configuredMaxAttempts()) };
+  },
+});
+
+/** Upper bound for one bounded cleanup batch, matching the S04 project loop. */
+export const DELETE_BATCH_MAX = 100;
+
+/**
+ * S22 document deletion, mirroring the S04 two-phase project protocol:
+ *
+ * 1. the idempotent first call stamps the `deletedAt` tombstone and flips the
+ *    document back to `pending`, which hides it from every read surface
+ *    immediately and stops a late ingestion settle from resurrecting it;
+ * 2. each bounded batch deletes the job first (an in-flight run then aborts
+ *    before it can recreate chunks), then the embedding vectors, then the
+ *    chunks — all through their `by_document` indexes, never a scan;
+ * 3. only when no job, embedding or chunk remains are the private-file row
+ *    and the stored blob removed; the empty tombstone row stays so an
+ *    already-issued citation resolves to the explicit `document-deleted`
+ *    unavailable state, and it is swept with the project.
+ *
+ * The client loops until `completed` (retrying resumes from whatever is still
+ * there); a repeat call after completion is a no-op that reports completed,
+ * and a foreign or unknown document id is a non-enumerating NOT_FOUND.
+ */
+export const deleteDocumentBatch = mutation({
+  args: { projectId: v.id("projects"), documentId: v.id("documents"), limit: v.number() },
+  returns: v.object({ completed: v.boolean(), deleted: v.number() }),
+  handler: async (ctx, args) => {
+    const ownerId = await requireUserId(ctx);
+    await requireOwnedProject(ctx, ownerId, args.projectId);
+    if (!Number.isInteger(args.limit) || args.limit < 1 || args.limit > DELETE_BATCH_MAX) throw new ConvexError({ code: "INVALID_ARGUMENT" });
+    const document = await ctx.db.get(args.documentId);
+    if (document === null || document.ownerId !== ownerId || document.projectId !== args.projectId) throw new ConvexError({ code: "NOT_FOUND" });
+    const now = Date.now();
+    // An already tombstoned document continues the purge instead of failing,
+    // so an interrupted or capped cleanup resumes where it stopped.
+    if (isLiveDocument(document)) {
+      await ctx.db.patch(document._id, { deletedAt: now, status: "pending", failureCode: null, updatedAt: now });
+    }
+
+    let deleted = 0;
+    const jobs = await ctx.db.query("ingestionJobs").withIndex("by_document", (q) => q.eq("documentId", args.documentId)).take(args.limit - deleted);
+    for (const job of jobs) {
+      await ctx.db.delete(job._id);
+      deleted += 1;
+    }
+    const embeddings = await ctx.db.query("chunkEmbeddings").withIndex("by_document", (q) => q.eq("documentId", args.documentId)).take(args.limit - deleted);
+    for (const row of embeddings) {
+      await ctx.db.delete(row._id);
+      deleted += 1;
+    }
+    const chunks = await ctx.db.query("documentChunks").withIndex("by_document", (q) => q.eq("documentId", args.documentId)).take(args.limit - deleted);
+    for (const chunk of chunks) {
+      await ctx.db.delete(chunk._id);
+      deleted += 1;
+    }
+
+    const remaining = await Promise.all(
+      (["ingestionJobs", "chunkEmbeddings", "documentChunks"] as const).map((table) => ctx.db.query(table).withIndex("by_document", (q) => q.eq("documentId", args.documentId)).take(1)),
+    );
+    if (remaining.some((rows) => rows.length > 0)) return { completed: false, deleted };
+
+    // Content is gone: drop the private-file row and its blob. A blob that is
+    // already missing must never block the bounded loop (same rule as the S04
+    // project deletion), and the tombstone row survives on purpose.
+    try {
+      await ctx.storage.delete(document.storageId);
+    } catch {
+      // Already deleted by an earlier batch or a previous cleanup.
+    }
+    const file = await ctx.db.get(document.privateFileId);
+    if (file !== null && file.ownerId === ownerId && file.projectId === args.projectId) {
+      await ctx.db.delete(file._id);
+      deleted += 1;
+    }
+    return { completed: true, deleted };
   },
 });
