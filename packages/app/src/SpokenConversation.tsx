@@ -40,6 +40,8 @@ export type SpokenConversationProps = {
   playback?: ResponsePlayerEnvironment | undefined;
   /** Test/preview hook: receives the machine once, before the first restore. */
   onControllerReady?: ((controller: ConversationController) => void) | undefined;
+  /** Pre-selects one of the S18 actions (production leaves it unchosen). */
+  defaultAction?: TurnAction | undefined;
 };
 
 /**
@@ -50,7 +52,7 @@ export type SpokenConversationProps = {
  * reconnect. Translation actions (S18) keep their panel-level flow: only the
  * `transcribe` action continues into retrieval/generation and speech.
  */
-export function SpokenConversation({ projectId, siteUrl, conversation, capture, playback, onControllerReady }: SpokenConversationProps) {
+export function SpokenConversation({ projectId, siteUrl, conversation, capture, playback, onControllerReady, defaultAction }: SpokenConversationProps) {
   const token = useAuthToken();
   const tokenRef = useRef(token);
   useEffect(() => {
@@ -68,12 +70,13 @@ export function SpokenConversation({ projectId, siteUrl, conversation, capture, 
       },
       projectId,
     });
+    if (defaultAction !== undefined) controllerRef.current.setAction(defaultAction);
   }
   const controller = controllerRef.current;
   const state: ConversationState = useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot);
 
   const [language, setLanguageState] = useState<TurnLanguage>("en");
-  const [action, setActionState] = useState<TurnAction | null>(null);
+  const [action, setActionState] = useState<TurnAction | null>(defaultAction ?? null);
   const [target, setTargetState] = useState<TranslationLanguage>("en");
   const [textTranslation, dispatchText] = useReducer(reduceTextTranslation, undefined, initialTextTranslationState);
   const translationAbort = useRef<AbortController | null>(null);

@@ -1,13 +1,16 @@
 import { createRoot } from "react-dom/client";
 
 import { CitationLink, type CitationReference } from "./components/CitationLink.js";
+import type { ConversationBackend, ConversationTranscriptPage, ConversationTurn, RunTurnInput, RunTurnResult } from "./data/conversation.js";
 import type { DocumentItem, DocumentsBackend, SourceChunk, SourceView } from "./data/documents.js";
 import { Root } from "./Root.js";
 import type { ProjectDraft, ProjectPatch, ProjectSummary, ProjectsBackend } from "./data/projects.js";
-import type { SpeechOptions, TutorBackend } from "./data/tutor.js";
-import type { ResponsePlayerEnvironment } from "./playerController.js";
+import type { SpeechOptions, TutorBackend, TutorResponseSummary, TutorTurnSummary } from "./data/tutor.js";
+import type { PlayerPlayback, ResponsePlayerEnvironment } from "./playerController.js";
+import { SpokenConversation } from "./SpokenConversation.js";
 import { TutorResponseSection } from "./TutorResponseSection.js";
 import type { TtsResult } from "./ttsClient.js";
+import type { CaptureRecording, CaptureSubscription, TurnEnvironment } from "./turnController.js";
 
 /**
  * Dev-only preview fixtures for local screenshot evidence. Reached exclusively
@@ -304,11 +307,164 @@ function PreviewCitations({ projectId }: { projectId: string }) {
   );
 }
 
+
+/* ------------------------------------------------------------------ *
+ * S17 conversation preview: one scripted fixture per stage state
+ * ------------------------------------------------------------------ */
+
+type ConversationPreviewCase = "ready" | "listening" | "transcribing" | "generating" | "speaking" | "error";
+
+const CONVERSATION_PREVIEW_CASES: readonly ConversationPreviewCase[] = ["ready", "listening", "transcribing", "generating", "speaking", "error"];
+
+const CONVERSATION_QUESTION = "What is photosynthesis?";
+
+const CONVERSATION_ANSWER =
+  "Photosynthesis is how plants turn light into stored chemical energy [1]. Chlorophyll in the leaf absorbs sunlight and drives the reaction that produces glucose [2].";
+
+const CONVERSATION_HISTORY: ConversationTranscriptPage = {
+  messages: [
+    { turnId: "preview-turn-1", role: "learner", content: CONVERSATION_QUESTION, createdAt: now - 120_000, citations: [] },
+    {
+      turnId: "preview-turn-1",
+      role: "tutor",
+      content: CONVERSATION_ANSWER,
+      createdAt: now - 118_000,
+      citations: [
+        { rank: 1, documentId: "preview-doc-1", chunkId: "preview-chunk-2", seq: 1, contentHash: "preview-hash-0002", page: 2, heading: null },
+        { rank: 2, documentId: "preview-doc-1", chunkId: "preview-chunk-3", seq: 2, contentHash: "preview-hash-0003", page: null, heading: "Practice routine" },
+      ],
+    },
+  ],
+  droppedCitations: 0,
+};
+
+/** Scripted S14 port: hangs or fails exactly where the screenshot needs it. */
+function previewConversationBackend(previewCase: ConversationPreviewCase): ConversationBackend {
+  return {
+    async latestResponse(): Promise<TutorResponseSummary | null> {
+      return null;
+    },
+    async latestTurn(): Promise<TutorTurnSummary | null> {
+      return null;
+    },
+    async speechOptions(): Promise<SpeechOptions> {
+      return PREVIEW_SPEECH_OPTIONS;
+    },
+    async cancelTurn() {
+      // Preview fixtures never talk to a backend.
+    },
+    async getTurn(): Promise<ConversationTurn | null> {
+      return null;
+    },
+    async transcript(): Promise<ConversationTranscriptPage> {
+      return { messages: [...CONVERSATION_HISTORY.messages], droppedCitations: 0 };
+    },
+    async runTurn(input: RunTurnInput): Promise<RunTurnResult> {
+      if (previewCase === "generating") return new Promise<RunTurnResult>(() => undefined);
+      if (previewCase === "error") return { ok: false, code: "TURN_TIMEOUT", retryAfterMs: null, ambiguous: false };
+      return { ok: true, turnId: input.turnId, text: CONVERSATION_ANSWER, replayed: false };
+    },
+  };
+}
+
+/** Scripted microphone: never records until the driver stops it. */
+function previewConversationCapture(previewCase: ConversationPreviewCase): TurnEnvironment {
+  const pendingTranscription = previewCase === "transcribing" || previewCase === "listening" || previewCase === "ready";
+  return {
+    hasCaptureSupport: () => true,
+    isTypeSupported: () => true,
+    startMicrophone: async (mimeType: string, subscription: CaptureSubscription): Promise<CaptureRecording> => ({
+      stop: () => subscription.onAudio(new Blob([new Uint8Array([0x01, 0x02, 0x03])], { type: mimeType })),
+      stopTracks: () => undefined,
+    }),
+    readPeakLevel: async () => 1,
+    transcribe: ({ turnId }) =>
+      pendingTranscription
+        ? new Promise(() => undefined)
+        : Promise.resolve({ ok: true, text: CONVERSATION_QUESTION, detectedLanguage: "en", durationMs: 1.4, turnId }),
+    translateAudio: async () => ({ ok: false, code: "unsupported-codec", message: "preview", retryAfterMs: null }),
+    newTurnId: () =>
+      typeof crypto !== "undefined" && "randomUUID" in crypto
+        ? crypto.randomUUID()
+        : `preview-turn-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    now: () => Date.now(),
+    schedule: (callback, delayMs) => setTimeout(callback, delayMs),
+    cancelSchedule: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
+    discardAudio: () => undefined,
+  };
+}
+
+function previewConversationPlayback(): ResponsePlayerEnvironment {
+  return {
+    async fetchAudio(): Promise<TtsResult> {
+      return { ok: true, audio: new Blob([new Uint8Array([0x49, 0x44, 0x33, 0x04])], { type: "audio/mpeg" }), contentType: "audio/mpeg" };
+    },
+    async createPlayback(): Promise<PlayerPlayback> {
+      return {
+        async play() {
+          // The scripted playback starts and holds, which is the speaking state.
+        },
+        pause() {
+          // Preview only.
+        },
+        dispose() {
+          // Preview only.
+        },
+        onEnded: null,
+        onError: null,
+      };
+    },
+  };
+}
+
+/** Auto-drives one scripted turn up to (and holding at) the target stage. */
+function driveConversationPreview(controller: { start: () => Promise<void>; stopRecording: () => void }, previewCase: ConversationPreviewCase): void {
+  if (previewCase === "ready") return;
+  void controller.start().then(() => {
+    if (previewCase === "listening") return;
+    controller.stopRecording();
+  });
+}
+
+function ConversationPreview({ previewCase }: { previewCase: ConversationPreviewCase }) {
+  return (
+    <div className="app">
+      <header className="app-header">
+        <span className="brand">Learn Anything</span>
+      </header>
+      <main className="app-main">
+        <section className="screen" aria-labelledby="preview-project-heading">
+          <div className="screen-header">
+            <h1 id="preview-project-heading">Spanish conversation</h1>
+          </div>
+          <div className="project-summary">
+            <p className="badge">Language practice</p>
+            <p className="card-goal">Hold a five-minute chat about my weekend</p>
+          </div>
+          <SpokenConversation
+            projectId="preview-spanish"
+            defaultAction="transcribe"
+            conversation={previewConversationBackend(previewCase)}
+            capture={previewConversationCapture(previewCase)}
+            playback={previewConversationPlayback()}
+            onControllerReady={(controller) => driveConversationPreview(controller, previewCase)}
+          />
+        </section>
+      </main>
+    </div>
+  );
+}
+
 export function mountPreview(root: HTMLElement): void {
   const raw = window.location.hash.slice("#/preview/".length).split(/[?&]/)[0];
   if (raw.startsWith("player")) {
     const playerCase: PlayerPreviewCase = (PLAYER_PREVIEW_CASES.find((name) => raw === `player-${name}`) ?? "playing") as PlayerPreviewCase;
     createRoot(root).render(<PlayerPreview playerCase={playerCase} />);
+    return;
+  }
+  if (raw.startsWith("conversation")) {
+    const previewCase = (CONVERSATION_PREVIEW_CASES.find((name) => raw === `conversation-${name}`) ?? "ready") as ConversationPreviewCase;
+    createRoot(root).render(<ConversationPreview previewCase={previewCase} />);
     return;
   }
   const previewCase = (raw in TARGETS ? raw : "dashboard") as PreviewCase;
