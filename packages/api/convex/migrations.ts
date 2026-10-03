@@ -33,18 +33,21 @@ export const checkCompatibility = internalQuery({
 const BACKFILL_BATCH = 100;
 
 /**
- * S09 resumable marker migration for schema/function version 6: the optional
- * lease/retry columns on `ingestionJobs` plus the `documentChunks` table. It
- * supersedes S21's no-backfill version 5 marker (the same replace-the-marker
- * step S08 took for versions 2/3), and also adopts a v5 deployment in place.
- * Each call performs one bounded batch (indexed by `documentId`) that backfills
- * `nextAttemptAt` on S08-era rows so they enter `by_status_next`, then records
- * the cursor; a retry resumes after the last processed document and the final
- * call writes the version marker. Patches are idempotent, so an interrupted
- * batch that replays changes nothing twice. `maxAttempts` stays optional and
- * is resolved at read time, so no backfill depends on deployment configuration.
+ * S12 resumable marker migration for schema/function version 7: the
+ * `chunkEmbeddings` table with its 4096-dimension vector index. The table
+ * starts empty and needs no backfill; the migration is a marker write that
+ * adopts any older deployment in place (the same replace-the-marker step S09
+ * took for version 6, which it supersedes while keeping that migration's
+ * idempotent `nextAttemptAt` backfill so a pre-v6 deployment is not skipped).
+ * Each call performs one bounded batch (indexed by `documentId`) that
+ * backfills `nextAttemptAt` on S08-era rows so they enter `by_status_next`,
+ * then records the cursor; a retry resumes after the last processed document
+ * and the final call writes the version marker. Patches are idempotent, so an
+ * interrupted batch that replays changes nothing twice. `maxAttempts` stays
+ * optional and is resolved at read time, so no backfill depends on deployment
+ * configuration.
  */
-export const bootstrapSchemaV6 = internalMutation({
+export const bootstrapSchemaV7 = internalMutation({
   args: {},
   returns: migrationResult,
   handler: async (ctx) => {

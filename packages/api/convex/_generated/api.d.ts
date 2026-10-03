@@ -13,6 +13,7 @@ import type * as auth from "../auth.js";
 import type * as cors from "../cors.js";
 import type * as crons from "../crons.js";
 import type * as documents from "../documents.js";
+import type * as embeddings from "../embeddings.js";
 import type * as files from "../files.js";
 import type * as http from "../http.js";
 import type * as ingestion from "../ingestion.js";
@@ -35,6 +36,7 @@ declare const fullApi: ApiFromModules<{
   cors: typeof cors;
   crons: typeof crons;
   documents: typeof documents;
+  embeddings: typeof embeddings;
   files: typeof files;
   http: typeof http;
   ingestion: typeof ingestion;

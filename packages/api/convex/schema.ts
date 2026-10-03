@@ -190,4 +190,42 @@ export default defineSchema({
   })
     .index("by_owner_project", ["ownerId", "projectId"])
     .index("by_document", ["documentId"]),
+  /**
+   * S12 one embedding row per current-version chunk, kept out of
+   * `documentChunks` so ordinary chunk reads never load a 4096-float vector.
+   * `model`/`modelVersion`/`dimensions` record who produced the vector and at
+   * what width; `commitEmbeddings` rejects any row whose model or dimension
+   * does not match the configured qwen3-embedding contract before it is
+   * written. The vector index stores the full (untruncated) 4096-dimensional
+   * vector, per the S05 filter-and-recheck contract.
+   *
+   * Vector filter expressions support only `q.eq` and `q.or` — there is no
+   * AND combinator — so `scopeKey` is the server-derived `ownerId:projectId`
+   * conjunction that lets one equality filter bind both tenant fields before
+   * retrieval. `ownerId` and `projectId` stay declared filterFields and are
+   * re-enforced on every hit by the ownership recheck.
+   */
+  chunkEmbeddings: defineTable({
+    ownerId: v.string(),
+    projectId: v.id("projects"),
+    scopeKey: v.string(),
+    documentId: v.id("documents"),
+    chunkId: v.id("documentChunks"),
+    contentVersionKey: v.string(),
+    seq: v.number(),
+    model: v.string(),
+    modelVersion: v.string(),
+    dimensions: v.number(),
+    embedding: v.array(v.float64()),
+    embeddedAt: v.number(),
+  })
+    .index("by_owner_project", ["ownerId", "projectId"])
+    .index("by_document", ["documentId"])
+    .index("by_document_version", ["documentId", "contentVersionKey"])
+    .index("by_chunk", ["chunkId"])
+    .vectorIndex("by_embedding", {
+      vectorField: "embedding",
+      dimensions: 4096,
+      filterFields: ["ownerId", "projectId", "scopeKey"],
+    }),
 });
