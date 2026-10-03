@@ -82,7 +82,10 @@ server-issued connection token (ADR-0004):
 
 1. The authenticated owner calls Convex `issueConnectionToken` (S06) and
    receives a 256-bit token bound to `ownerId + projectId`, TTL 300 s
-   (max 900 s).
+   (max 900 s). The call only succeeds for a full Convex Auth session subject
+   (`userId|sessionId`): an identity carrying only an email address or only a
+   user id is rejected, so the stored binding can never be email-only or
+   user-id-only.
 2. `POST /agent/session { token, reconnect? }` on the agent Worker verifies
    the token against the Convex deployment
    (`/agent/connection-tokens/verify`, or `/reconnect` which rotates the

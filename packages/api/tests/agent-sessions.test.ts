@@ -4,6 +4,7 @@ import { expect, test } from "vitest";
 import { api, internal } from "../convex/_generated/api.js";
 import schema from "../convex/schema.js";
 import { decodeAccessToken, EMAIL, installAuthTestEnv, PASSWORD, TEST_ISSUER } from "./helpers/authEnv.js";
+import { expectTypedCode } from "./helpers/typedError.js";
 
 installAuthTestEnv();
 
@@ -193,4 +194,65 @@ test("issue clamps nothing silently: TTL bounds and single-token revocation are 
 
   const after = await a.mutation(api.agentSessions.revokeAllConnectionTokens, {});
   expect(after).toEqual({ revoked: 0, remaining: false });
+});
+
+test("a connection token can only be issued from a full Convex Auth session identity", async () => {
+  const t = convexTest({ schema, modules });
+  const a = t.withIdentity(identity("owner-a|session-1"));
+  const projectA = await a.mutation(api.projects.createProject, { name: "A" });
+
+  // An email-only subject, a user-id-only subject and half of either are all
+  // rejected: no stored record may ever be bound to a partial identity.
+  const partialSubjects = ["learner@example.test", "owner-a", "owner-a|", "|session-1", ""];
+  for (const subject of partialSubjects) {
+    const partial = t.withIdentity(identity(subject));
+    await expectTypedCode(partial.mutation(api.agentSessions.issueConnectionToken, { projectId: projectA }), "UNAUTHENTICATED");
+  }
+
+  // The full session subject still issues, so the denials above are the guard
+  // and not a broken fixture.
+  await expect(a.mutation(api.agentSessions.issueConnectionToken, { projectId: projectA })).resolves.toMatchObject({ token: expect.any(String) });
+});
+
+test("the stored binding is ownerId + projectId + session, never an email address", async () => {
+  const t = convexTest({ schema, modules });
+  const tokens = await t.action(api.auth.signIn, { provider: "password", params: { flow: "signUp", email: EMAIL, password: PASSWORD } });
+  if (tokens.tokens === null || tokens.tokens === undefined) throw new Error("expected tokens");
+  const subject = decodeAccessToken(tokens.tokens.token).sub;
+  const [userId, sessionId] = subject.split("|");
+  const learner = t.withIdentity(identity(subject));
+  const project = await learner.mutation(api.projects.createProject, { name: "A" });
+  const issued = await learner.mutation(api.agentSessions.issueConnectionToken, { projectId: project });
+
+  const stored = await t.run(async (ctx) => ctx.db.get(issued.tokenId));
+  expect(stored?.ownerId).toBe(userId);
+  expect(stored?.ownerId).not.toBe(EMAIL);
+  expect(stored?.authSessionId).toBe(sessionId);
+  expect(stored?.projectId).toBe(project);
+});
+
+test("the handshake ignores client-supplied identities and rejects an email or user id presented as a token", async () => {
+  const t = convexTest({ schema, modules });
+  const a = t.withIdentity(identity("owner-a|session-1"));
+  const projectA = await a.mutation(api.projects.createProject, { name: "A" });
+  const issued = await a.mutation(api.agentSessions.issueConnectionToken, { projectId: projectA });
+
+  // Extra identity fields in the body are never trusted: the verified scope
+  // comes from the stored record alone.
+  const rebound = await postAgent(t, "/agent/connection-tokens/verify", {
+    token: issued.token,
+    ownerId: "owner-b",
+    userId: "owner-b",
+    email: "learner@example.test",
+    projectId: "proj_owner_2",
+  });
+  expect(rebound.status).toBe(200);
+  expect(((await rebound.json()) as AgentResponse)).toMatchObject({ ok: true, ownerId: "owner-a", projectId: projectA });
+
+  // Possessing an email address or a bare user id is not a handshake.
+  for (const credential of ["learner@example.test", "owner-a", "owner-a|session-1"]) {
+    const rejected = await postAgent(t, "/agent/connection-tokens/verify", { token: credential });
+    expect(rejected.status, credential).toBe(401);
+    expect(((await rejected.json()) as AgentResponse).code, credential).toBe("CONNECTION_TOKEN_INVALID");
+  }
 });
