@@ -84,3 +84,38 @@ test("maps verification failures to typed statuses", async () => {
   expect(unavailable.status).toBe(502);
   expect(((await unavailable.json()) as { code: string }).code).toBe("AGENT_VERIFY_UNAVAILABLE");
 });
+
+test("the connect path binds owner and project from the verified token, never from the request body", async () => {
+  const response = await handleSessionRequest(post({ token: TOKEN, ownerId: "learner@example.test", projectId: "proj_attacker_scope", instanceId: "la_attacker" }), ENV, fetchReturning(success()));
+  expect(response.status).toBe(200);
+  const payload = (await response.json()) as { instanceId: string; connectPath: string };
+
+  const instanceId = await deriveInstanceId(SECRET, OWNER, PROJECT);
+  expect(payload.instanceId).toBe(instanceId);
+  expect(payload.connectPath).toBe(agentConnectPath(instanceId));
+  expect(payload.instanceId).not.toBe(await deriveInstanceId(SECRET, "learner@example.test", "proj_attacker_scope"));
+  expect(payload.instanceId).not.toBe("la_attacker");
+});
+
+test("an instance id can never be derived from an owner id or a project id alone", async () => {
+  const instanceId = await deriveInstanceId(SECRET, OWNER, PROJECT);
+
+  // Same owner, different project: a user-id-only binding would collide here.
+  expect(await deriveInstanceId(SECRET, OWNER, "proj_owner_2_scope")).not.toBe(instanceId);
+  expect(await deriveInstanceId(SECRET, OWNER, "")).not.toBe(instanceId);
+  // Same project, different owner (including an email-shaped one).
+  expect(await deriveInstanceId(SECRET, "user_owner_2", PROJECT)).not.toBe(instanceId);
+  expect(await deriveInstanceId(SECRET, "learner@example.test", PROJECT)).not.toBe(instanceId);
+  // Neither half is readable in the derived id.
+  expect(instanceId).not.toContain(OWNER);
+  expect(instanceId).not.toContain(PROJECT);
+  expect(instanceId).not.toContain("learner@example.test");
+});
+
+test("a verified token that is only an email address or a bare user id never reaches a connect path", async () => {
+  for (const credential of ["learner@example.test", OWNER]) {
+    const response = await handleSessionRequest(post({ token: credential }), ENV, fetchReturning({ ok: false, code: "CONNECTION_TOKEN_INVALID", httpStatus: 401 }));
+    expect(response.status, credential).toBe(401);
+    expect(((await response.json()) as { code: string }).code, credential).toBe("CONNECTION_TOKEN_INVALID");
+  }
+});
