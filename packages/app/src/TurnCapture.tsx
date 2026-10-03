@@ -1,10 +1,22 @@
 import { useAuthToken } from "@convex-dev/auth/react";
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useReducer, useRef, useState, useSyncExternalStore } from "react";
 
 import { resolveConvexSiteUrl, type TurnLanguage } from "./audioCapture.js";
 import { TurnCapturePanel } from "./TurnCapturePanel.js";
 import { requestTranscription } from "./transcribeClient.js";
-import { TurnController, type CaptureRecording, type CaptureSubscription, type TurnEnvironment } from "./turnController.js";
+import { requestAudioTranslation, requestTextTranslation } from "./translationClient.js";
+import {
+  initialTextTranslationState,
+  reduceTextTranslation,
+  type TranslationLanguage,
+} from "./translationState.js";
+import {
+  TurnController,
+  type CaptureRecording,
+  type CaptureSubscription,
+  type TurnEnvironment,
+} from "./turnController.js";
+import type { TurnAction } from "./turnState.js";
 
 function browserTurnEnvironment(siteUrl: string, getToken: () => string | null): TurnEnvironment {
   const hasCaptureSupport = (): boolean =>
@@ -54,6 +66,8 @@ function browserTurnEnvironment(siteUrl: string, getToken: () => string | null):
     },
     transcribe: ({ audio, projectId, language, turnId, signal }) =>
       requestTranscription({ siteUrl, token: getToken(), projectId, language, turnId, audio, signal }),
+    translateAudio: ({ audio, projectId, target, turnId, signal }) =>
+      requestAudioTranslation({ siteUrl, token: getToken(), projectId, turnId, target, audio, signal }),
     newTurnId: () =>
       typeof crypto !== "undefined" && "randomUUID" in crypto
         ? crypto.randomUUID()
@@ -72,7 +86,7 @@ export type TurnCaptureProps = {
   siteUrl?: string | undefined;
 };
 
-/** Container: owns the controller and the browser environment for one project. */
+/** Container: owns the controller, the explicit action choice and the browser environment for one project. */
 export function TurnCapture({ projectId, siteUrl }: TurnCaptureProps) {
   const token = useAuthToken();
   const tokenRef = useRef(token);
@@ -91,6 +105,20 @@ export function TurnCapture({ projectId, siteUrl }: TurnCaptureProps) {
   const controller = controllerRef.current;
   const state = useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot);
   const [language, setLanguageState] = useState<TurnLanguage>("en");
+  const [action, setActionState] = useState<TurnAction | null>(null);
+  const [target, setTargetState] = useState<TranslationLanguage>("en");
+  const [textTranslation, dispatchText] = useReducer(reduceTextTranslation, undefined, initialTextTranslationState);
+  const translationAbort = useRef<AbortController | null>(null);
+
+  useEffect(() => () => translationAbort.current?.abort(), []);
+
+  // A finished recording seeds the text source once per turn; later events from
+  // the same turn can never overwrite text the learner has edited.
+  useEffect(() => {
+    if (state.phase === "transcript") {
+      dispatchText({ type: "SEED_ORIGINAL", text: state.text, source: state.detectedLanguage, turnId: state.turnId });
+    }
+  }, [state]);
 
   const handleLanguageChange = useCallback(
     (next: TurnLanguage) => {
@@ -100,15 +128,64 @@ export function TurnCapture({ projectId, siteUrl }: TurnCaptureProps) {
     [controller],
   );
 
+  const handleActionChange = useCallback(
+    (next: TurnAction) => {
+      setActionState(next);
+      controller.setAction(next);
+    },
+    [controller],
+  );
+
+  const handleTargetChange = useCallback(
+    (next: TranslationLanguage) => {
+      setTargetState(next);
+      controller.setTarget(next);
+    },
+    [controller],
+  );
+
+  const handleTranslateText = useCallback(() => {
+    const abort = new AbortController();
+    translationAbort.current?.abort();
+    translationAbort.current = abort;
+    dispatchText({ type: "REQUEST" });
+    void requestTextTranslation({
+      siteUrl: resolveConvexSiteUrl(import.meta.env.VITE_CONVEX_URL, siteUrl),
+      token: tokenRef.current,
+      projectId,
+      text: textTranslation.original,
+      source: textTranslation.source,
+      target,
+      signal: abort.signal,
+    }).then((result) => {
+      if (abort.signal.aborted) return;
+      translationAbort.current = null;
+      if (result.ok) {
+        dispatchText({ type: "SUCCEEDED", target: result.target, translation: result.translation, unchanged: result.unchanged });
+      } else {
+        dispatchText({ type: "FAILED", code: result.code, retryAfterMs: result.retryAfterMs });
+      }
+    });
+  }, [projectId, siteUrl, target, textTranslation.original, textTranslation.source]);
+
   return (
     <TurnCapturePanel
       state={state}
+      action={action}
+      onActionChange={handleActionChange}
       language={language}
       onLanguageChange={handleLanguageChange}
+      target={target}
+      onTargetChange={handleTargetChange}
       onStart={() => void controller.start()}
       onStop={controller.stopRecording}
       onCancel={controller.cancel}
       onEditTranscript={controller.editTranscript}
+      textTranslation={textTranslation}
+      onEditSourceText={(text) => dispatchText({ type: "EDIT_ORIGINAL", text })}
+      onSourceLanguageChange={(source) => dispatchText({ type: "SET_SOURCE", source })}
+      onTranslateText={handleTranslateText}
+      onClearTranslation={() => dispatchText({ type: "CLEAR_RESULT" })}
     />
   );
 }

@@ -2,12 +2,14 @@ import { expect, test } from "vitest";
 
 import { MAX_AUDIO_BYTES, MAX_RECORDING_MS, MAX_RECORDING_SECONDS, RECORDING_TICK_MS } from "../src/audioCapture.js";
 import type { TranscribeResult } from "../src/transcribeClient.js";
+import type { AudioTranslationResult } from "../src/translationClient.js";
 import { TurnController, type CaptureSubscription, type CaptureRecording, type TurnEnvironment } from "../src/turnController.js";
 import type { TurnState } from "../src/turnState.js";
 
 type Scheduled = { id: number; at: number; callback: () => void };
 
 type TranscribeInput = Parameters<TurnEnvironment["transcribe"]>[0];
+type TranslateAudioInput = Parameters<TurnEnvironment["translateAudio"]>[0];
 
 function createHarness(options: Partial<TurnEnvironment> = {}) {
   let now = 0;
@@ -20,6 +22,7 @@ function createHarness(options: Partial<TurnEnvironment> = {}) {
     stopTrackCalls: 0,
     discarded: [] as Blob[],
     transcribeInputs: [] as TranscribeInput[],
+    translateAudioInputs: [] as TranslateAudioInput[],
     states: [] as TurnState[],
   };
   const recording: CaptureRecording = {
@@ -40,6 +43,13 @@ function createHarness(options: Partial<TurnEnvironment> = {}) {
       durationMs: 1.5,
       turnId: input.turnId,
     }));
+  const customTranslateAudio =
+    options.translateAudio ??
+    (async (input: TranslateAudioInput): Promise<AudioTranslationResult> => ({
+      ok: true,
+      text: "hello turn translated",
+      turnId: input.turnId,
+    }));
   const env: TurnEnvironment = {
     hasCaptureSupport: options.hasCaptureSupport ?? (() => true),
     isTypeSupported: options.isTypeSupported ?? ((type) => type.startsWith("audio/webm")),
@@ -54,6 +64,10 @@ function createHarness(options: Partial<TurnEnvironment> = {}) {
     transcribe: (input) => {
       spies.transcribeInputs.push(input);
       return customTranscribe(input);
+    },
+    translateAudio: (input) => {
+      spies.translateAudioInputs.push(input);
+      return customTranslateAudio(input);
     },
     newTurnId: options.newTurnId ?? (() => `turn-${spies.transcribeInputs.length + 1}`),
     now: options.now ?? (() => now),
@@ -74,6 +88,9 @@ function createHarness(options: Partial<TurnEnvironment> = {}) {
     discardAudio: (audio) => spies.discarded.push(audio),
   };
   const controller = new TurnController({ env, projectId: "proj-1" });
+  // The panel never records before the learner picks an action; the harness
+  // picks transcription so the capture tests stay focused on capture.
+  controller.setAction("transcribe");
   controller.subscribe(() => spies.states.push(controller.getSnapshot()));
 
   const harness = {
@@ -316,4 +333,72 @@ test("oversize audio is rejected client-side without a provider request", async 
   expect(harness.controller.getSnapshot()).toEqual({ phase: "failed", code: "too-large", retryAfterMs: null });
   expect(harness.spies.transcribeInputs).toHaveLength(0);
   expect(harness.spies.discarded).toHaveLength(1);
+});
+
+test("recording never starts before the learner picks an action", async () => {
+  const harness = createHarness();
+  harness.controller.setAction(null);
+  await harness.controller.start();
+  expect(harness.controller.getSnapshot()).toEqual({ phase: "idle" });
+  expect(harness.spies.startedMimes).toHaveLength(0);
+  expect(harness.spies.transcribeInputs).toHaveLength(0);
+  expect(harness.spies.translateAudioInputs).toHaveLength(0);
+});
+
+test("the transcription action uses only the transcription path", async () => {
+  const harness = createHarness();
+  await harness.controller.start();
+  harness.controller.stopRecording();
+  await waitUntil(() => harness.controller.getSnapshot().phase === "transcript", "transcript");
+  expect(harness.spies.transcribeInputs).toHaveLength(1);
+  expect(harness.spies.translateAudioInputs).toHaveLength(0);
+  expect(harness.controller.getSnapshot()).toMatchObject({ kind: "transcription" });
+});
+
+test("the audio translation action calls the English translation path and labels the result", async () => {
+  const harness = createHarness();
+  harness.controller.setAction("translate-audio");
+  harness.controller.setTarget("en");
+  await harness.controller.start();
+  harness.controller.stopRecording();
+  await waitUntil(() => harness.controller.getSnapshot().phase === "transcript", "audio translation");
+  expect(harness.spies.transcribeInputs).toHaveLength(0);
+  expect(harness.spies.translateAudioInputs).toHaveLength(1);
+  expect(harness.spies.translateAudioInputs[0]).toMatchObject({ projectId: "proj-1", target: "en" });
+  expect(harness.controller.getSnapshot()).toEqual({
+    phase: "transcript",
+    kind: "audio-translation",
+    text: "hello turn translated",
+    detectedLanguage: "en",
+    durationMs: null,
+    turnId: "turn-1",
+  });
+  expect(harness.spies.discarded).toEqual([harness.audio]);
+});
+
+test("audio translation to a non-English target never records and never reaches a provider", async () => {
+  const harness = createHarness();
+  harness.controller.setAction("translate-audio");
+  harness.controller.setTarget("es");
+  await harness.controller.start();
+  expect(harness.controller.getSnapshot()).toEqual({ phase: "idle" });
+  expect(harness.spies.startedMimes).toHaveLength(0);
+  expect(harness.spies.translateAudioInputs).toHaveLength(0);
+  expect(harness.spies.transcribeInputs).toHaveLength(0);
+});
+
+test("an unsupported audio translation answer surfaces as its own visible failure", async () => {
+  const harness = createHarness({
+    translateAudio: async () => ({
+      ok: false,
+      code: "unsupported-audio-target",
+      message: "Audio translation to Spanish is not supported.",
+      retryAfterMs: null,
+    }),
+  });
+  harness.controller.setAction("translate-audio");
+  harness.controller.setTarget("es");
+  await harness.controller.start();
+  expect(harness.controller.getSnapshot()).toEqual({ phase: "idle" });
+  expect(harness.spies.translateAudioInputs).toHaveLength(0);
 });
