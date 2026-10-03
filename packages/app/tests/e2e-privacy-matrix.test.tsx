@@ -54,6 +54,7 @@ const modules = {
   "../../api/convex/http.ts": () => import("../../api/convex/http.js"),
   "../../api/convex/ingestion.ts": () => import("../../api/convex/ingestion.js"),
   "../../api/convex/languagePractice.ts": () => import("../../api/convex/languagePractice.js"),
+  "../../api/convex/observability.ts": () => import("../../api/convex/observability.js"),
   "../../api/convex/projects.ts": () => import("../../api/convex/projects.js"),
   "../../api/convex/redirects.ts": () => import("../../api/convex/redirects.js"),
   "../../api/convex/retrieval.ts": () => import("../../api/convex/retrieval.js"),
@@ -171,7 +172,20 @@ const functionRows: FunctionRow[] = [
 ];
 
 test.each(functionRows)("convex surface: $attempt is denied with $expected", async (row) => {
-  await expect(row.run(seeded)).rejects.toThrow(row.expected);
+  const s = seeded;
+  const providerBefore = { ...provider.counts };
+  const turnsBefore = await countRows(s.t, "tutorTurns");
+  const messagesBefore = await countRows(s.t, "messages");
+  const citationsBefore = await countRows(s.t, "citations");
+
+  await expect(row.run(s)).rejects.toThrow(row.expected);
+
+  // C15's contract, asserted on every row: a denial is complete — no provider
+  // round trip (0 mocked-fetch calls) and no row written.
+  expect(provider.counts).toEqual(providerBefore);
+  expect(await countRows(s.t, "tutorTurns")).toBe(turnsBefore);
+  expect(await countRows(s.t, "messages")).toBe(messagesBefore);
+  expect(await countRows(s.t, "citations")).toBe(citationsBefore);
 });
 
 /* ------------------------------------------------------------------ *
@@ -317,10 +331,18 @@ test("agent surface: B cannot issue, revoke or revalidate A's connection state, 
  * Surface: caches and telemetry
  * ------------------------------------------------------------------ */
 
+type RateLimitBucketRow = { ownerId: string; bucket: string; windowStart: number; count: number; updatedAt: number };
+
 test("cache/telemetry surface: denials write nothing for B, telemetry stays redacted and owner-scoped", async () => {
   const s = seeded;
+  // Bucket snapshot taken before B's denials below: A's own authenticated
+  // upload during seeding consumed her bucket, so "never A's bucket" has a
+  // non-vacuous row to protect.
+  const bucketsBefore = await allRows<RateLimitBucketRow>(s.t, "rateLimitBuckets");
+  expect(bucketsBefore.filter((row) => row.ownerId === "learner-a").length).toBeGreaterThan(0);
   // B's denied attempts across surfaces (one per family) must not create
-  // telemetry, rate-limit buckets or any row keyed to A's project.
+  // telemetry, must not spend A's rate-limit bucket, and must not create any
+  // row keyed to A's project.
   const stt = await s.b.fetch(`/stt/transcribe?projectId=${encodeURIComponent(s.projectId)}&language=en&turnId=matrix-turn-1`, {
     method: "POST",
     headers: { "content-type": "audio/webm" },
@@ -339,9 +361,18 @@ test("cache/telemetry surface: denials write nothing for B, telemetry stays reda
   expect(serialized).not.toContain(QUESTION);
   expect(serialized).not.toContain("Plants turn light");
 
-  // Rate-limit buckets are owner-scoped; B never got (or spent) A's bucket.
-  const buckets = await allRows<{ ownerId: string; projectId?: string }>(s.t, "rateLimitBuckets");
-  expect(buckets.filter((row) => row.ownerId === "learner-b")).toHaveLength(0);
+  // Rate-limit buckets are owner-scoped (T4): every row is keyed to the learner
+  // who consumed it and carries no project content, so B's denials are charged
+  // only to B's own bucket — never A's, whose rows are byte-identical before and
+  // after (B never got, and never spent, A's bucket).
+  const buckets = await allRows<RateLimitBucketRow>(s.t, "rateLimitBuckets");
+  expect(buckets.length).toBeGreaterThan(0);
+  expect(buckets.every((row) => row.ownerId === "learner-a" || row.ownerId === "learner-b")).toBe(true);
+  expect(buckets.every((row) => !("projectId" in row))).toBe(true);
+  expect(buckets.filter((row) => row.ownerId === "learner-b").length).toBeGreaterThan(0);
+  expect(buckets.filter((row) => row.ownerId === "learner-a")).toEqual(
+    bucketsBefore.filter((row) => row.ownerId === "learner-a"),
+  );
 
   // There is no public read surface for telemetry at all: the observability
   // module exports only internal functions and constants (source scan, the
