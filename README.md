@@ -64,6 +64,10 @@ Convex Free is distinct from metered Starter. Checked limits include database 0.
 
 Cloudflare agent state is session/runtime state only; Convex owns durable projects, documents, messages and progress. The bridge must validate the selected auth provider's JWT/OIDC contract or a short-lived scoped server-issued connection token. Never assume a browser user ID or email authenticates an agent, or that Convex Auth tokens are accepted automatically by Cloudflare.
 
+## Deployment and recovery
+
+`docs/deployment-runbook.md` is the operator procedure for the agent-only Cloudflare Free + Convex deployment: per-environment (dev/staging/prod) configuration and Convex Auth callback allowlists, where every key in `.env.example` lives per environment and how to prove no secret reached a client asset, Convex Free vs metered Starter quotas with usage alerts and the no-billing-upgrade guard, Workers Free/SQLite Durable Object limits, versioned schema migrations and worker retries, the health-check gate that blocks a failed release, backup/restore/rollback limits, recovery procedures, and the ordered single-user-before-multiuser preflight. Dry-run and config validation with fake values live in its section 7; no provisioning, secret insertion or live provider call is authorized by that document.
+
 ## Security
 
 **No secrets in this repo.** No API keys, deployment-admin credentials, production URLs containing credentials, private documents, recordings, personal data or account exports. Commit only synthetic fixtures and empty/example configuration values.

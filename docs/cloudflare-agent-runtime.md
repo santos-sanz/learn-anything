@@ -176,6 +176,10 @@ provider quota.
 
 ## Deployment, migration and rollback
 
+The full operator procedure (environments, secret storage per environment,
+health-check gate, backup/restore and recovery) is
+`docs/deployment-runbook.md` (S25).
+
 - No Convex schema/function change ships with S07; the runtime only consumes
   the S06 HTTP routes. Convex rollback is independent of this package.
 - First deploy creates the `LearnerAgent` Durable Object namespace with the
