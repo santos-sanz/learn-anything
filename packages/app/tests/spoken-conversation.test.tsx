@@ -112,7 +112,7 @@ test("a generating failure is an alert with Retry and Discard, and Retry never d
   await user.click(screen.getByRole("button", { name: "Stop and transcribe" }));
 
   const alert = await screen.findByRole("alert");
-  expect(alert.textContent).toContain("Retry the same turn");
+  expect(alert.textContent).toContain("starts a new turn");
   expect(stageResult("generating")).toBe("failed");
   expect(screen.getByRole("button", { name: "Retry" })).toBeTruthy();
   expect(screen.getByRole("button", { name: "Discard response" })).toBeTruthy();

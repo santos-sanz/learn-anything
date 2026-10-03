@@ -115,7 +115,7 @@ describe("every stage and error is visible with retry/cancel at the right points
     expect(state.failedStage).toBe("generating");
     expect(state.failure?.retry).toBe("regenerate");
     expect(state.failure?.ambiguous).toBe(false);
-    expect(state.failure?.message).toContain("Retry the same turn");
+    expect(state.failure?.message).toContain("starts a new turn");
     expect(conversationActions(state).map((action) => action.kind)).toEqual(["retry", "discard"]);
   });
 

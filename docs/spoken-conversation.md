@@ -68,9 +68,11 @@ travels to `runTurn` and to TTS, so S14's idempotency covers the whole turn:
 - **Typed terminal failure** (`TURN_TIMEOUT`, `TURN_NOT_CONFIGURED`, auth
   errors…): that row is terminal with **zero messages**, so the retry mints a
   fresh id. Locked by the "FRESH turn id" test.
-- A client-side guard rejects a second in-flight `runTurn` for the same
-  logical attempt, and the reducer rejects any result whose `turnId` is not
-  the current one.
+- Double-send protection is the reducer's current-`turnId` check plus the
+  controller's monotonic generation token: there is no reachable path today
+  that issues a second in-flight `runTurn`, and S14 idempotency would cover
+  a same-id duplicate anyway. The reducer also drops any result whose
+  `turnId` is not the current one.
 - The two-turn E2E proves the server side: after two full turns there are
   exactly two `tutorTurns`, four messages, one provider round trip per stage
   per turn, and re-sending turn 1's `runTurn` returns `replayed: true` with
@@ -159,7 +161,11 @@ budget:
 | listening (learner time, recorded only) | 1 385 ms | 1 845 ms | not budgeted |
 
 Budgets (`RELEASE_LATENCY_BUDGET_MS` in `packages/app/src/latency.ts`) are
-the measured p95 with headroom (≈1.4–1.8×, rounded); they are enforced by
+the measured p95 rounded up with **per-stage** headroom, not one global
+factor: permission 48 → 150 ms (≈3.1×, the smallest stage, so its ceiling
+stays a round number), transcribe 840 → 1 500 ms (≈1.8×), generate
+2 834 → 4 000 ms (≈1.4×), speak 1 310 → 2 000 ms (≈1.5×) and end-to-end
+4 157 → 7 000 ms (≈1.7×). They are enforced by
 `latency-budget.test.ts`, so a future change that widens a stage boundary
 fails CI instead of silently growing the budget. The sample definition
 (size, seed, envelopes) and the budget table are pinned by the same file.

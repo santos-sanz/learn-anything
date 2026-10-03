@@ -209,7 +209,7 @@ export function generatingFailureMessage(code: string, retryAfterMs: number | nu
     case "TURN_POLICY_BLOCKED":
       return "The tutor is only enabled for the deployer in this self-hosted build.";
     case "TURN_TIMEOUT":
-      return "The tutor timed out. Retry the same turn — no duplicate answer can be created.";
+      return "The tutor timed out. Retry (starts a new turn) — no duplicate answer can be created.";
     case "TURN_RATE_LIMITED": {
       const seconds = retryAfterMs === null ? null : Math.ceil(retryAfterMs / 1000);
       return seconds === null
@@ -219,7 +219,7 @@ export function generatingFailureMessage(code: string, retryAfterMs: number | nu
     case "TURN_PROVIDER_ERROR":
     case "TURN_PROVIDER_MALFORMED":
     case "TURN_PROVIDER_UNSUPPORTED":
-      return "The tutor service failed to answer. Retry the same turn.";
+      return "The tutor service failed to answer. Retry (starts a new turn).";
     case "TURN_ANSWER_TOO_LONG":
       return "The tutor answer exceeded the length limit. Ask a narrower question and record again.";
     case "TURN_INPUT_TOO_LARGE":
