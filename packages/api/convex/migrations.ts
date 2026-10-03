@@ -33,25 +33,37 @@ export const checkCompatibility = internalQuery({
 const BACKFILL_BATCH = 100;
 
 /**
- * Resumable marker migration for schema/function version 10, which unions the
- * two scopes that each shipped as a version 9 marker on their own branch:
- * S22 document management (the optional `documents.deletedAt` deletion
- * tombstone and the `documentChunks.by_document_seq` index) and S19 language
- * practice (the optional `projects.languagePractice` settings, the third
- * `tutorTurns.answerBasis` `translation` member and the empty `practisedTopics`
- * table). Every addition is optional/empty-start, so an earlier row validates
+/**
+ * Resumable marker migration for schema/function version 11. The marker
+ * records the union of every scope that shipped as its own marker version:
+ * **v11 = v10 (S19 union S22) union S20**. Version 10 itself already unioned
+ * the two version-9 branches — S22 document management (the optional
+ * `documents.deletedAt` deletion tombstone and the
+ * `documentChunks.by_document_seq` index) and S19 language practice (the
+ * optional `projects.languagePractice` settings, the third
+ * `tutorTurns.answerBasis` `translation` member and the empty
+ * `practisedTopics` table) — and version 11 adds the S20 concept-learning
+ * scope on top: the optional `progressEvents` columns (`idempotencyKey`,
+ * `activity`, `objective`, `difficulty`, `outcome`, `evidence`, `turnId`,
+ * `references`, `targetEventId`, `feedbackValue`, `retractedAt`) plus two
+ * `progressEvents` indexes (`by_owner_project_idempotency`,
+ * `by_owner_project_target`) and the optional `projects.objective`/
+ * `difficulty` selection columns.
+ *
+ * Every addition is optional/empty-start, so an earlier row validates
  * unchanged with no backfill — the migration is the marker write that adopts
- * any older deployment in place, superseding the `bootstrap-schema-v9` and
- * `bootstrap-schema-v8` markers while keeping their idempotent `nextAttemptAt`
- * backfill so a pre-v6 deployment is not skipped. Each call performs one
- * bounded batch (indexed by `documentId`) that backfills `nextAttemptAt` on
- * S08-era rows so they enter `by_status_next`, then records the cursor; a retry
- * resumes after the last processed document and the final call writes the
- * version marker. Patches are idempotent, so an interrupted batch that replays
- * changes nothing twice. `maxAttempts` stays optional and is resolved at read
- * time, so no backfill depends on deployment configuration.
+ * any older deployment in place, superseding the `bootstrap-schema-v10` (and
+ * the earlier `bootstrap-schema-v9`/`bootstrap-schema-v8`) markers while
+ * keeping their idempotent `nextAttemptAt` backfill so a pre-v6 deployment is
+ * not skipped. Each call performs one bounded batch (indexed by
+ * `documentId`) that backfills `nextAttemptAt` on S08-era rows so they enter
+ * `by_status_next`, then records the cursor; a retry resumes after the last
+ * processed document and the final call writes the version marker. Patches
+ * are idempotent, so an interrupted batch that replays changes nothing twice.
+ * `maxAttempts` stays optional and is resolved at read time, so no backfill
+ * depends on deployment configuration.
  */
-export const bootstrapSchemaV10 = internalMutation({
+export const bootstrapSchemaV11 = internalMutation({
   args: {},
   returns: migrationResult,
   handler: async (ctx) => {

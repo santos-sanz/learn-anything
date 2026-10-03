@@ -10,6 +10,7 @@
 
 import type * as agentSessions from "../agentSessions.js";
 import type * as auth from "../auth.js";
+import type * as concept from "../concept.js";
 import type * as cors from "../cors.js";
 import type * as crons from "../crons.js";
 import type * as documents from "../documents.js";
@@ -38,6 +39,7 @@ import type {
 declare const fullApi: ApiFromModules<{
   agentSessions: typeof agentSessions;
   auth: typeof auth;
+  concept: typeof concept;
   cors: typeof cors;
   crons: typeof crons;
   documents: typeof documents;
