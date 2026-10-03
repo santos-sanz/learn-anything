@@ -1,6 +1,6 @@
 # ADR-0002: runtimes and deployment boundary
 
-**Status:** Accepted
+**Status:** Accepted (amended 2026-10-03 by issue #38: web client hosting bound to Vercel)
 **Date:** 2026-10-02
 
 ## Context
@@ -46,6 +46,22 @@ free-tier limit is exceeded; those failures must be visible and safe, never
 trigger a paid upgrade. Cloudflare is not an Access gate and does not host the
 general frontend.
 
+**Vercel (Hobby, free tier) hosts the web client, and only the web client**
+(amendment, issue #38, 2026-10-03). The hosting boundary is therefore: Vercel
+serves the static Vite build of `packages/app`; Convex hosts the backend
+(functions, auth, storage, HTTP actions); Cloudflare Workers Free hosts only
+the project-scoped agents. The repository carries the whole frontend contract
+in `vercel.json` (framework preset, install/build commands, output directory
+and the security-header set including the microphone permission policy) plus
+the pinned Node build line in the root `package.json` `engines.node`
+(`22.x`, matching CI's Node 22.14.0). Convex Auth redirect/CORS allowlists
+stay exact-match per environment (`SITE_URL`, `AUTH_REDIRECT_URIS`); Vercel
+preview/production origins are added as exact origins only, never wildcards.
+This ADR is documentation and configuration: it creates no Vercel project,
+triggers no deployment, and changes no dashboard or secret — those remain
+separate owner authority, as does setting `JWT_PRIVATE_KEY`/`JWKS` for the
+Convex deployment.
+
 **Ingestion uses resumable Convex actions** after the browser uploads a file to
 Convex storage through an authorized upload URL. A job advances through small,
 idempotent stages (validate, extract, chunk, embed, commit) and records a
@@ -72,8 +88,11 @@ are the governing provider/auth references.
 
 ## Consequences
 
-- No paid plan, Cloudflare Access gate, frontend host, Node worker, secret, or
-  provider account is provisioned by this decision.
+- No paid plan, Cloudflare Access gate, Node worker, secret, or provider
+  account is provisioned by this decision — and the Vercel amendment provisions
+  nothing either: it binds configuration in this repository, while project
+  creation, deployment, dashboard settings and the Convex auth secrets workflow
+  stay owner authority.
 - Ingestion tests must cover oversize rejection, failed/retried stages and two
   users; agent tests must cover forged, expired and reconnect tokens.
 - Free quota exhaustion is an explicit operational error. It does not authorize
