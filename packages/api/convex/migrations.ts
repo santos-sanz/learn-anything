@@ -33,20 +33,22 @@ export const checkCompatibility = internalQuery({
 const BACKFILL_BATCH = 100;
 
 /**
- * S14 resumable marker migration for schema/function version 8: the
- * `tutorTurns` and `citations` tables (both start empty, so no column backfill
- * exists). The migration is a marker write that adopts any older deployment in
- * place — the same replace-the-marker step S12 took for version 7, which it
- * supersedes while keeping that migration's idempotent `nextAttemptAt`
- * backfill so a pre-v6 deployment is not skipped. Each call performs one
- * bounded batch (indexed by `documentId`) that backfills `nextAttemptAt` on
- * S08-era rows so they enter `by_status_next`, then records the cursor; a retry
- * resumes after the last processed document and the final call writes the
- * version marker. Patches are idempotent, so an interrupted batch that replays
- * changes nothing twice. `maxAttempts` stays optional and is resolved at read
- * time, so no backfill depends on deployment configuration.
+ * S19 resumable marker migration for schema/function version 9: the
+ * `practisedTopics` table (starts empty) and the optional `projects` /
+ * `tutorTurns.answerBasis` validator additions (no backfill; old rows read as
+ * unset or with their existing values). The migration is a marker write that
+ * adopts any older deployment in place — the same replace-the-marker step
+ * every version bump takes, superseding `bootstrap-schema-v8` while keeping
+ * that migration's idempotent `nextAttemptAt` backfill so a pre-v6 deployment
+ * is not skipped. Each call performs one bounded batch (indexed by
+ * `documentId`) that backfills `nextAttemptAt` on S08-era rows so they enter
+ * `by_status_next`, then records the cursor; a retry resumes after the last
+ * processed document and the final call writes the version marker. Patches are
+ * idempotent, so an interrupted batch that replays changes nothing twice.
+ * `maxAttempts` stays optional and is resolved at read time, so no backfill
+ * depends on deployment configuration.
  */
-export const bootstrapSchemaV8 = internalMutation({
+export const bootstrapSchemaV9 = internalMutation({
   args: {},
   returns: migrationResult,
   handler: async (ctx) => {

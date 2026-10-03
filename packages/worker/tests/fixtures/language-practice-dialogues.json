@@ -1,0 +1,54 @@
+{
+  "dialogues": [
+    {
+      "id": "beginner-market",
+      "level": "beginner",
+      "targetLanguage": "en",
+      "topic": "shopping at the market",
+      "reviewed": true,
+      "turns": [
+        {
+          "learner": "Yesterday I go to the market and I buy many fruits.",
+          "correction": "I went to the market and I bought many fruits.",
+          "shortExample": "Yesterday I went to the market.",
+          "beginnerReply": "Nice trip! What fruit did you buy?",
+          "intermediateReply": "That sounds nice, and I wonder which fruit you ended up buying?",
+          "advancedReply": "Interesting. Setting aside the tense slips, what made you choose the market over the supermarket?"
+        },
+        {
+          "learner": "The fruits was very expensive but I buy two kilos of apples.",
+          "correction": "The fruits were very expensive, so I bought two kilos of apples.",
+          "shortExample": "The apples were expensive, so I bought two kilos.",
+          "beginnerReply": "Good choice! Apples are tasty.",
+          "intermediateReply": "Good choice, although I would have bought fewer apples if the price was that high.",
+          "advancedReply": "Fair enough, though I would have negotiated the price or waited for a cheaper stall."
+        }
+      ]
+    },
+    {
+      "id": "intermediate-work-update",
+      "level": "intermediate",
+      "targetLanguage": "en",
+      "topic": "giving a work update",
+      "reviewed": true,
+      "turns": [
+        {
+          "learner": "Yesterday I explain the project to my team and everyone agree with the plan.",
+          "correction": "Yesterday I explained the project to my team and everyone agreed with the plan.",
+          "shortExample": "Yesterday I explained the plan to my team.",
+          "beginnerReply": "Great! Your team agreed.",
+          "intermediateReply": "That is good news, and since everyone agreed, I wonder what the next step will be.",
+          "advancedReply": "A rare consensus, surely. Did anyone challenge the timeline, or did the plan sail through untouched?"
+        },
+        {
+          "learner": "We was discussing the budget when the manager arrives late to the meeting.",
+          "correction": "We were discussing the budget when the manager arrived late to the meeting.",
+          "shortExample": "We were discussing the budget when he arrived.",
+          "beginnerReply": "Oh no! The meeting started late.",
+          "intermediateReply": "That sounds awkward, although late arrivals are common when meetings overlap.",
+          "advancedReply": "Unfortunate, yet predictable: recurring overruns say more about the calendar than about the manager."
+        }
+      ]
+    }
+  ]
+}
