@@ -3,59 +3,10 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 
 import { resolveConvexSiteUrl } from "./audioCapture.js";
 import type { SpeechOptions, TutorBackend, TutorResponseSummary, TutorTurnSummary } from "./data/tutor.js";
-import { ResponsePlayerController, type PlayerPlayback, type ResponsePlayerEnvironment } from "./playerController.js";
+import { createBrowserPlayback } from "./environments.js";
+import { ResponsePlayerController, type ResponsePlayerEnvironment } from "./playerController.js";
 import { ResponsePlayer } from "./ResponsePlayer.js";
 import { requestTtsAudio } from "./ttsClient.js";
-
-/**
- * Real browser playback over an in-memory object URL. The bytes were fetched
- * through the authenticated route and live only in this tab: nothing is
- * written to storage and no URL is persisted or logged.
- */
-export function createBrowserPlayback(audio: Blob): Promise<PlayerPlayback> {
-  const url = URL.createObjectURL(audio);
-  const element = new Audio();
-  return new Promise<PlayerPlayback>((resolve, reject) => {
-    let settled = false;
-    const handle: PlayerPlayback = {
-      async play() {
-        await element.play();
-      },
-      pause() {
-        element.pause();
-      },
-      dispose() {
-        element.pause();
-        element.removeAttribute("src");
-        element.load();
-        URL.revokeObjectURL(url);
-      },
-      onEnded: null,
-      onError: null,
-    };
-    const finish = (failed: boolean) => {
-      if (settled) return;
-      settled = true;
-      element.removeEventListener("canplay", ready);
-      element.removeEventListener("error", broken);
-      if (failed) {
-        URL.revokeObjectURL(url);
-        reject(new Error("The browser could not load this audio."));
-      } else {
-        resolve(handle);
-      }
-    };
-    const ready = () => finish(false);
-    const broken = () => finish(true);
-    element.addEventListener("canplay", ready, { once: true });
-    element.addEventListener("error", broken, { once: true });
-    element.addEventListener("ended", () => handle.onEnded?.());
-    element.addEventListener("error", () => handle.onError?.());
-    element.preload = "auto";
-    element.src = url;
-    element.load();
-  });
-}
 
 const LANGUAGE_LABELS: Record<string, string> = { en: "English", es: "Spanish" };
 

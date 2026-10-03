@@ -49,7 +49,9 @@ test("saving edits name and goal with confirmation of success", async () => {
   await waitFor(() => expect(state.updated).toHaveLength(1));
   expect(state.updated[0]).toEqual({ id: "p1", patch: { name: "New name", goal: "" } });
   expect(await screen.findByRole("heading", { level: 1, name: "New name" })).toBeTruthy();
-  expect(screen.getByRole("status").textContent).toContain("Changes saved.");
+  // Scoped to the success message: the S17 stage track adds its own status region.
+  const savedMessage = screen.getByText("Changes saved.");
+  expect(savedMessage.getAttribute("role")).toBe("status");
   expect(screen.queryByText("Old goal")).toBeNull();
 });
 
@@ -87,7 +89,8 @@ test("a failed save surfaces a safe retryable message without losing edits", asy
   state.failUpdate = null;
   await user.click(screen.getByRole("button", { name: "Save changes" }));
   await waitFor(() => expect(state.updated).toHaveLength(1));
-  expect(screen.getByRole("status").textContent).toContain("Changes saved.");
+  const savedMessage = screen.getByText("Changes saved.");
+  expect(savedMessage.getAttribute("role")).toBe("status");
 });
 
 test("a missing or foreign project shows a non-enumerating message with a way back", async () => {

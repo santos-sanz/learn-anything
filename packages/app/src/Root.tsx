@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 
 import { deriveAuthView, mapAuthError } from "./authView.js";
+import type { ConversationBackend } from "./data/conversation.js";
 import type { DocumentsBackend } from "./data/documents.js";
 import { ProjectsProvider } from "./data/ProjectsProvider.js";
 import type { ProjectsBackend } from "./data/projects.js";
-import type { TutorBackend } from "./data/tutor.js";
 import { Dashboard } from "./screens/Dashboard.js";
 import { DocumentsScreen } from "./screens/DocumentsScreen.js";
 import { NewProject } from "./screens/NewProject.js";
@@ -34,7 +34,7 @@ function Shell({
 }: {
   busy: boolean;
   error: string | null;
-  tutor?: TutorBackend | undefined;
+  tutor?: ConversationBackend | undefined;
   documents?: DocumentsBackend | null | undefined;
   onSignOut: () => void | Promise<void>;
 }) {
@@ -96,7 +96,7 @@ export function Root({
 }: {
   session: AuthSession;
   backend: ProjectsBackend;
-  tutor?: TutorBackend;
+  tutor?: ConversationBackend;
   documents?: DocumentsBackend | null | undefined;
 }) {
   const [error, setError] = useState<string | null>(null);

@@ -614,6 +614,149 @@ a {
   overflow-wrap: anywhere;
 }
 
+/* S17 spoken conversation */
+
+.conversation {
+  margin-top: 1.5rem;
+}
+
+.stage-track {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 1rem;
+  background: var(--surface-sunken);
+  max-width: 44rem;
+  margin-bottom: 1.25rem;
+}
+
+.stage-list {
+  list-style: none;
+  margin: 0 0 0.75rem;
+  padding: 0;
+  display: grid;
+  gap: 0.5rem;
+  grid-template-columns: 1fr;
+}
+
+.stage-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 0.5rem 0.75rem;
+  background: var(--surface);
+}
+
+.stage-item .stage-name {
+  font-weight: 600;
+}
+
+.stage-item .stage-result {
+  color: var(--ink);
+  font-size: 0.9rem;
+  text-align: right;
+}
+
+.stage-item[data-state="done"] {
+  background: var(--success-surface);
+  border-color: var(--success-line);
+}
+
+.stage-item[data-state="current"] {
+  background: var(--progress-surface);
+  border-color: var(--accent);
+}
+
+.stage-item[data-state="error"] {
+  background: var(--danger-surface);
+  border-color: var(--danger-surface-line);
+}
+
+.stage-item[data-state="waiting"] {
+  background: var(--surface);
+  color: var(--ink);
+}
+
+.stage-item[data-state="waiting"] .stage-name,
+.stage-item[data-state="waiting"] .stage-result {
+  color: var(--ink-soft);
+}
+
+.stage-status {
+  margin: 0 0 0.5rem;
+  font-weight: 500;
+}
+
+.stage-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin: 0;
+}
+
+.conversation-history {
+  margin-top: 1.5rem;
+  max-width: 44rem;
+}
+
+.history-list {
+  list-style: none;
+  margin: 0.75rem 0 0;
+  padding: 0;
+  display: grid;
+  gap: 0.75rem;
+}
+
+.history-item {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 0.75rem 1rem;
+  background: var(--surface);
+}
+
+.history-item[data-role="tutor"] {
+  background: var(--surface-sunken);
+}
+
+.history-speaker {
+  margin: 0 0 0.35rem;
+  font-weight: 600;
+}
+
+.history-text {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.history-citations {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 0.75rem;
+  margin: 0.5rem 0 0;
+  padding: 0;
+}
+
+.history-citations a {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.history-note {
+  color: var(--ink-soft);
+  font-size: 0.9rem;
+}
+
+@media (min-width: 40rem) {
+  .stage-list {
+    grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+  }
+}
+
 /* Responsive */
 
 @media (min-width: 40rem) {
