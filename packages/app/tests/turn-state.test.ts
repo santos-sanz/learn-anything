@@ -59,6 +59,7 @@ test("a captured turn moves through analysis to an editable transcript", () => {
   });
   expect(state).toEqual({
     phase: "transcript",
+    kind: "transcription",
     text: "hola mundo",
     detectedLanguage: "es",
     durationMs: 1.5,
@@ -87,9 +88,27 @@ test("silence and every provider failure map to their own visible states", () =>
   expect(failureMessage("rate-limited", 3_000)).toMatch(/3 seconds/);
   expect(failureMessage("provider-unavailable", null)).toMatch(/service/i);
   expect(failureMessage("too-large", null)).toMatch(/shorter/i);
-  for (const code of ["silence", "timeout", "rate-limited", "provider-unavailable", "not-configured", "too-large", "unsupported-codec", "unauthenticated", "not-found", "provider-policy", "invalid-request", "network", "unknown"] as const) {
+  for (const code of ["silence", "timeout", "rate-limited", "provider-unavailable", "not-configured", "too-large", "unsupported-codec", "unsupported-audio-target", "unauthenticated", "not-found", "provider-policy", "invalid-request", "network", "unknown"] as const) {
     expect(failureMessage(code, null).length).toBeGreaterThan(10);
   }
+  expect(failureMessage("unsupported-audio-target", null)).toMatch(/only produces English/);
+  expect(failureMessage("unsupported-audio-target", null)).toMatch(/translate the text instead/i);
+});
+
+test("an audio translation result is labelled as a translation, never as a transcript", () => {
+  const state = reduceTurn(transcribing, { type: "AUDIO_TRANSLATED", text: "hello world", turnId: "turn-9" });
+  expect(state).toEqual({
+    phase: "transcript",
+    kind: "audio-translation",
+    text: "hello world",
+    detectedLanguage: "en",
+    durationMs: null,
+    turnId: "turn-9",
+  });
+  // It only applies to the in-flight provider stage.
+  expect(reduceTurn(recording, { type: "AUDIO_TRANSLATED", text: "late", turnId: "turn-9" })).toBe(recording);
+  const idle = initialTurnState();
+  expect(reduceTurn(idle, { type: "AUDIO_TRANSLATED", text: "late", turnId: "turn-9" })).toBe(idle);
 });
 
 test("abort cancels every in-flight stage and only those stages", () => {
@@ -101,7 +120,7 @@ test("abort cancels every in-flight stage and only those stages", () => {
   ]) {
     expect(reduceTurn(state, { type: "ABORT" })).toEqual({ phase: "aborted" });
   }
-  expect(reduceTurn({ phase: "transcript", text: "t", detectedLanguage: "en", durationMs: null, turnId: "x" }, { type: "ABORT" })).toMatchObject({ phase: "transcript" });
+  expect(reduceTurn({ phase: "transcript", kind: "transcription", text: "t", detectedLanguage: "en", durationMs: null, turnId: "x" }, { type: "ABORT" })).toMatchObject({ phase: "transcript" });
   expect(reduceTurn(recording, { type: "RESET" })).toEqual({ phase: "idle" });
 });
 

@@ -16,6 +16,7 @@ import type { Id } from "./_generated/dataModel";
 import { httpAction } from "./_generated/server";
 import { requireUserId } from "./projects";
 import { transcribeTurnRoute } from "./stt";
+import { translateAudioRoute, translateTextRoute } from "./translation";
 
 const http = httpRouter();
 
@@ -216,6 +217,16 @@ http.route({ pathPrefix: "/private-files/", method: "GET", handler: httpAction(a
  */
 http.route({ path: "/stt/transcribe", method: "OPTIONS", handler: corsPreflightRoute });
 http.route({ path: "/stt/transcribe", method: "POST", handler: transcribeTurnRoute });
+
+/**
+ * S18 explicit translation. Audio translation is English-only by provider
+ * design; text translation carries an explicit source/target pair. Both
+ * preflight exactly like the S15 route because both send `Authorization`.
+ */
+http.route({ path: "/translation/audio", method: "OPTIONS", handler: corsPreflightRoute });
+http.route({ path: "/translation/audio", method: "POST", handler: translateAudioRoute });
+http.route({ path: "/translation/text", method: "OPTIONS", handler: corsPreflightRoute });
+http.route({ path: "/translation/text", method: "POST", handler: translateTextRoute });
 
 auth.addHttpRoutes(http);
 

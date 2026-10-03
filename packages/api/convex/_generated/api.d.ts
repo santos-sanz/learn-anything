@@ -20,6 +20,7 @@ import type * as migrations from "../migrations.js";
 import type * as projects from "../projects.js";
 import type * as redirects from "../redirects.js";
 import type * as stt from "../stt.js";
+import type * as translation from "../translation.js";
 import type * as version from "../version.js";
 
 import type {
@@ -41,6 +42,7 @@ declare const fullApi: ApiFromModules<{
   projects: typeof projects;
   redirects: typeof redirects;
   stt: typeof stt;
+  translation: typeof translation;
   version: typeof version;
 }>;
 

@@ -1,5 +1,9 @@
 import { assertNanProviderPolicy, type NanDeploymentContext } from "./policy.js";
 import {
+  assertTranslationSourceSize,
+  buildTranslationPrompt,
+} from "./translation.js";
+import {
   defaultNanQuotaControls,
   NAN_BASE_URL,
   nanModels,
@@ -45,7 +49,14 @@ export class NanClient {
 
   async translateText(text: string, source: NanLanguage, target: NanLanguage, options: NanFetchOptions = {}): Promise<string> {
     if (source === target) return text;
-    return this.chat("text-translation", [{ role: "system", content: `Translate from ${source} to ${target}. Return only the translation.` }, { role: "user", content: text }], options);
+    assertTranslationSourceSize(text);
+    // The system instruction is built only from the validated language pair;
+    // the source text is JSON-encoded into the user message as data.
+    const prompt = buildTranslationPrompt({ text, source, target });
+    return this.chat("text-translation", [
+      { role: "system", content: prompt.system },
+      { role: "user", content: prompt.user },
+    ], options);
   }
 
   async *streamTutor(messages: NanMessage[], options: NanFetchOptions = {}): AsyncGenerator<string> {
@@ -109,9 +120,18 @@ export class NanClient {
     return this.audioJson("transcription", "/audio/transcriptions", audio, language, options);
   }
 
-  async translateAudioToEnglish(audio: NanAudioInput, options: NanFetchOptions = {}): Promise<{ text: string }> {
+  /**
+   * Whisper's translation endpoint outputs English only. The response is
+   * checked against that documented limit instead of relabelling whatever
+   * comes back, so a non-English answer surfaces as a malformed provider
+   * response rather than being passed on as if it were English.
+   */
+  async translateAudioToEnglish(audio: NanAudioInput, options: NanFetchOptions = {}): Promise<{ text: string; language: "en" }> {
     const result = await this.audioJson("audio-translation-en", "/audio/translations", audio, undefined, options);
-    return { text: result.text };
+    if (result.language !== "en") {
+      throw new NanAdapterError("NAN_MALFORMED_RESPONSE", "NaN audio translation must report English output.");
+    }
+    return { text: result.text, language: "en" };
   }
 
   async speech(input: string, voice: NanVoice = nanVoices.english, options: NanFetchOptions = {}): Promise<Uint8Array> {

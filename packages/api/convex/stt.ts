@@ -15,10 +15,10 @@ import { requireOwnedProject, requireUserId } from "./projects";
  * transcoding belongs in this server runtime only — never in the browser and
  * never in CI.
  */
-const MAX_AUDIO_BYTES = 8 * 1024 * 1024; // below Convex's 20 MiB HTTP-action ceiling and NaN's 25 MiB provider cap
-const SUPPORTED_AUDIO_TYPES = new Set(["audio/webm", "audio/ogg", "audio/mp4"]);
-const DEFAULT_PROVIDER_TIMEOUT_MS = 15_000; // matches the S11 NaN quota default
-const MAX_TURN_ID_CHARS = 128;
+export const MAX_AUDIO_BYTES = 8 * 1024 * 1024; // below Convex's 20 MiB HTTP-action ceiling and NaN's 25 MiB provider cap
+export const SUPPORTED_AUDIO_TYPES = new Set(["audio/webm", "audio/ogg", "audio/mp4"]);
+export const DEFAULT_PROVIDER_TIMEOUT_MS = 15_000; // matches the S11 NaN quota default
+export const MAX_TURN_ID_CHARS = 128;
 type SpokenLanguage = "en" | "es"; // the S11 adapter's typed language set; S18 owns explicit translation
 
 /**
@@ -74,34 +74,47 @@ export const authorizeSttProject = internalQuery({
 
 type ProviderFailure = { status: number; code: string; retryAfterMs?: number; upstreamStatus?: number };
 
+/**
+ * Scopes the observable failure codes to the route that raised them, so an STT
+ * failure and a translation failure never collapse into the same client code.
+ * Identity, policy, cancellation and argument problems keep their shared names.
+ */
+export type ProviderFailureScope = {
+  readonly prefix: "STT" | "TRANSLATION";
+  readonly inputTooLargeCode: string;
+};
+
+export const sttFailureScope: ProviderFailureScope = { prefix: "STT", inputTooLargeCode: "AUDIO_TOO_LARGE" };
+
 /** Maps the S11 adapter's typed errors to observable HTTP statuses; 524 stays visible as an upstream gateway failure. */
-function mapProviderFailure(error: unknown): ProviderFailure {
-  if (!(error instanceof NanAdapterError)) return { status: 502, code: "STT_PROVIDER_ERROR" };
+export function mapProviderFailure(error: unknown, scope: ProviderFailureScope = sttFailureScope): ProviderFailure {
+  const { prefix } = scope;
+  if (!(error instanceof NanAdapterError)) return { status: 502, code: `${prefix}_PROVIDER_ERROR` };
   switch (error.code) {
     case "NAN_TIMEOUT":
-      return { status: 504, code: "STT_TIMEOUT" };
+      return { status: 504, code: `${prefix}_TIMEOUT` };
     case "NAN_RATE_LIMITED":
-      return { status: 429, code: "STT_RATE_LIMITED", retryAfterMs: error.retryAfterMs };
+      return { status: 429, code: `${prefix}_RATE_LIMITED`, retryAfterMs: error.retryAfterMs };
     case "NAN_CANCELLED":
       return { status: 499, code: "CANCELLED" };
     case "NAN_POLICY_BLOCKED":
       return { status: 403, code: "PROVIDER_POLICY_BLOCKED" };
     case "NAN_INPUT_TOO_LARGE":
-      return { status: 413, code: "AUDIO_TOO_LARGE" };
+      return { status: 413, code: scope.inputTooLargeCode };
     case "NAN_UNSUPPORTED_MODEL":
     case "NAN_UNSUPPORTED_CAPABILITY":
-      return { status: 502, code: "STT_PROVIDER_REJECTED" };
+      return { status: 502, code: `${prefix}_PROVIDER_REJECTED` };
     case "NAN_MALFORMED_RESPONSE":
-      return { status: 502, code: "STT_BAD_PROVIDER_RESPONSE" };
+      return { status: 502, code: `${prefix}_BAD_PROVIDER_RESPONSE` };
     case "NAN_PROVIDER_ERROR": {
       const upstream = /HTTP (\d{3})/.exec(error.message)?.[1];
-      if (upstream === "524") return { status: 502, code: "STT_PROVIDER_UNAVAILABLE", upstreamStatus: 524 };
+      if (upstream === "524") return { status: 502, code: `${prefix}_PROVIDER_UNAVAILABLE`, upstreamStatus: 524 };
       return upstream === undefined
-        ? { status: 502, code: "STT_PROVIDER_ERROR" }
-        : { status: 502, code: "STT_PROVIDER_ERROR", upstreamStatus: Number(upstream) };
+        ? { status: 502, code: `${prefix}_PROVIDER_ERROR` }
+        : { status: 502, code: `${prefix}_PROVIDER_ERROR`, upstreamStatus: Number(upstream) };
     }
     default:
-      return { status: 502, code: "STT_PROVIDER_ERROR" };
+      return { status: 502, code: `${prefix}_PROVIDER_ERROR` };
   }
 }
 
@@ -110,7 +123,7 @@ function configuredProviderTimeoutMs(): number {
   return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_PROVIDER_TIMEOUT_MS;
 }
 
-function fileExtensionFor(contentType: string): string {
+export function fileExtensionFor(contentType: string): string {
   if (contentType === "audio/ogg") return "ogg";
   if (contentType === "audio/mp4") return "m4a";
   return "webm";

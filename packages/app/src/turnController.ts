@@ -8,12 +8,15 @@ import {
   type TurnLanguage,
 } from "./audioCapture.js";
 import type { TranscribeResult } from "./transcribeClient.js";
+import type { AudioTranslationResult } from "./translationClient.js";
+import { AUDIO_TRANSLATION_TARGET, type TranslationLanguage } from "./translationState.js";
 import {
   canStartTurn,
-  failureMessage,
   initialTurnState,
   reduceTurn,
+  type TurnAction,
   type TurnEvent,
+  type TurnFailureCode,
   type TurnState,
 } from "./turnState.js";
 
@@ -33,6 +36,15 @@ export interface TurnEnvironment {
   startMicrophone: (mimeType: string, subscription: CaptureSubscription) => Promise<CaptureRecording>;
   readPeakLevel: (audio: Blob) => Promise<number>;
   transcribe: (input: { audio: Blob; projectId: string; language: TurnLanguage; turnId: string; signal: AbortSignal }) => Promise<TranscribeResult>;
+  /** Whisper's `/audio/translations` path; the request always carries the chosen target. */
+  translateAudio: (input: {
+    audio: Blob;
+    projectId: string;
+    target: TranslationLanguage;
+    turnId: string;
+    signal: AbortSignal;
+  }) => Promise<AudioTranslationResult>;
+
   newTurnId: () => string;
   now: () => number;
   schedule: (callback: () => void, delayMs: number) => unknown;
@@ -43,6 +55,12 @@ export interface TurnEnvironment {
 
 export type TurnControllerOptions = { env: TurnEnvironment; projectId: string };
 
+/** One recorded turn resolves to a labelled transcript, an English audio translation, or a typed failure. */
+type TurnOutcome =
+  | { ok: true; kind: "transcription"; text: string; detectedLanguage: TurnLanguage; durationMs: number | null; turnId: string }
+  | { ok: true; kind: "audio-translation"; text: string; turnId: string }
+  | { ok: false; code: TurnFailureCode; retryAfterMs: number | null };
+
 /**
  * Drives one microphone turn from permission request to editable
  * transcription. All browser/provider access goes through the injected
@@ -52,6 +70,8 @@ export type TurnControllerOptions = { env: TurnEnvironment; projectId: string };
 export class TurnController {
   private state: TurnState = initialTurnState();
   private language: TurnLanguage = "en";
+  private action: TurnAction | null = null;
+  private target: TranslationLanguage = "en";
   private readonly listeners = new Set<() => void>();
   private recording: CaptureRecording | null = null;
   private tickHandle: unknown = null;
@@ -74,8 +94,24 @@ export class TurnController {
     this.language = language;
   };
 
+  public readonly getAction = (): TurnAction | null => this.action;
+
+  /** Recording is impossible until the learner picks one of the three actions. */
+  public readonly setAction = (action: TurnAction | null): void => {
+    this.action = action;
+  };
+
+  public readonly getTarget = (): TranslationLanguage => this.target;
+
+  public readonly setTarget = (target: TranslationLanguage): void => {
+    this.target = target;
+  };
+
   public readonly start = async (): Promise<void> => {
-    if (!canStartTurn(this.state)) return;
+    if (this.action === null || !canStartTurn(this.state)) return;
+    // Whisper only translates audio into English: never record for a target
+    // this build cannot serve. The panel shows the text-translation fallback.
+    if (this.action === "translate-audio" && this.target !== AUDIO_TRANSLATION_TARGET) return;
     this.dispatch({ type: "START" });
     const { env } = this.options;
     if (!env.hasCaptureSupport()) {
@@ -214,33 +250,68 @@ export class TurnController {
     const abort = new AbortController();
     this.inFlightAbort = abort;
     const turnId = this.options.env.newTurnId();
-    let result: TranscribeResult;
+    const action = this.action;
+    let outcome: TurnOutcome;
     try {
-      result = await this.options.env.transcribe({
-        audio,
-        projectId: this.options.projectId,
-        language: this.language,
-        turnId,
-        signal: abort.signal,
-      });
+      outcome =
+        action === "translate-audio"
+          ? await this.translateAudioNow(audio, turnId, abort.signal)
+          : await this.transcribeNowRequest(audio, turnId, abort.signal);
     } catch {
-      result = { ok: false, code: "network", message: failureMessage("network", null), retryAfterMs: null };
+      outcome = { ok: false, code: "network", retryAfterMs: null };
     }
     this.inFlightAbort = null;
     if (abort.signal.aborted || this.getSnapshot().phase !== "transcribing") return; // cancel() already moved state and freed bytes
     this.audio = null;
     this.options.env.discardAudio(audio); // raw audio is discarded by default once processing ends, success or failure
-    if (result.ok) {
-      this.dispatch({
-        type: "TRANSCRIBED",
-        text: result.text,
-        detectedLanguage: result.detectedLanguage,
-        durationMs: result.durationMs,
-        turnId: result.turnId,
-      });
-    } else {
-      this.dispatch({ type: "TRANSCRIBE_FAILED", code: result.code, retryAfterMs: result.retryAfterMs });
+    if (!outcome.ok) {
+      this.dispatch({ type: "TRANSCRIBE_FAILED", code: outcome.code, retryAfterMs: outcome.retryAfterMs });
+      return;
     }
+    if (outcome.kind === "audio-translation") {
+      this.dispatch({ type: "AUDIO_TRANSLATED", text: outcome.text, turnId: outcome.turnId });
+      return;
+    }
+    this.dispatch({
+      type: "TRANSCRIBED",
+      text: outcome.text,
+      detectedLanguage: outcome.detectedLanguage,
+      durationMs: outcome.durationMs,
+      turnId: outcome.turnId,
+    });
+  }
+
+  private async transcribeNowRequest(audio: Blob, turnId: string, signal: AbortSignal): Promise<TurnOutcome> {
+    const result = await this.options.env.transcribe({
+      audio,
+      projectId: this.options.projectId,
+      language: this.language,
+      turnId,
+      signal,
+    });
+    return result.ok
+      ? {
+          ok: true,
+          kind: "transcription",
+          text: result.text,
+          detectedLanguage: result.detectedLanguage,
+          durationMs: result.durationMs,
+          turnId: result.turnId,
+        }
+      : { ok: false, code: result.code, retryAfterMs: result.retryAfterMs };
+  }
+
+  private async translateAudioNow(audio: Blob, turnId: string, signal: AbortSignal): Promise<TurnOutcome> {
+    const result = await this.options.env.translateAudio({
+      audio,
+      projectId: this.options.projectId,
+      target: this.target,
+      turnId,
+      signal,
+    });
+    return result.ok
+      ? { ok: true, kind: "audio-translation", text: result.text, turnId: result.turnId }
+      : { ok: false, code: result.code, retryAfterMs: result.retryAfterMs };
   }
 }
 

@@ -5,6 +5,9 @@ import {
   type TurnLanguage,
 } from "./audioCapture.js";
 
+/** The three explicit S18 actions. Recording never picks one implicitly. */
+export type TurnAction = "transcribe" | "translate-audio" | "translate-text";
+
 export type TurnFailureCode =
   | "silence"
   | "timeout"
@@ -13,6 +16,7 @@ export type TurnFailureCode =
   | "not-configured"
   | "too-large"
   | "unsupported-codec"
+  | "unsupported-audio-target"
   | "unauthenticated"
   | "not-found"
   | "provider-policy"
@@ -20,13 +24,23 @@ export type TurnFailureCode =
   | "network"
   | "unknown";
 
+/** How the recorded turn was processed: a transcript or an English translation. */
+export type TranscriptKind = "transcription" | "audio-translation";
+
 export type TurnState =
   | { phase: "idle" }
   | { phase: "requesting-permission" }
   | { phase: "recording"; elapsedMs: number; limitMs: number }
   | { phase: "analysing" }
   | { phase: "transcribing" }
-  | { phase: "transcript"; text: string; detectedLanguage: TurnLanguage; durationMs: number | null; turnId: string }
+  | {
+      phase: "transcript";
+      kind: TranscriptKind;
+      text: string;
+      detectedLanguage: TurnLanguage;
+      durationMs: number | null;
+      turnId: string;
+    }
   | { phase: "blocked"; reason: CaptureBlockReason }
   | { phase: "silence" }
   | { phase: "failed"; code: TurnFailureCode; retryAfterMs: number | null }
@@ -42,6 +56,7 @@ export type TurnEvent =
   | { type: "AUDIO_TOO_LARGE" }
   | { type: "AUDIO_READY" }
   | { type: "TRANSCRIBED"; text: string; detectedLanguage: TurnLanguage; durationMs: number | null; turnId: string }
+  | { type: "AUDIO_TRANSLATED"; text: string; turnId: string }
   | { type: "TRANSCRIBE_FAILED"; code: TurnFailureCode; retryAfterMs: number | null }
   | { type: "ABORT" }
   | { type: "EDIT_TRANSCRIPT"; text: string }
@@ -84,9 +99,23 @@ export function reduceTurn(state: TurnState, event: TurnEvent): TurnState {
       return state.phase === "transcribing"
         ? {
             phase: "transcript",
+            kind: "transcription",
             text: event.text,
             detectedLanguage: event.detectedLanguage,
             durationMs: event.durationMs,
+            turnId: event.turnId,
+          }
+        : state;
+    case "AUDIO_TRANSLATED":
+      // Whisper's translation endpoint answers English only; the result is
+      // labelled as a translation so it can never pass as a transcript.
+      return state.phase === "transcribing"
+        ? {
+            phase: "transcript",
+            kind: "audio-translation",
+            text: event.text,
+            detectedLanguage: "en",
+            durationMs: null,
             turnId: event.turnId,
           }
         : state;
@@ -123,6 +152,8 @@ export function failureMessage(code: TurnFailureCode, retryAfterMs: number | nul
       return "The recording is larger than the turn limit. Record a shorter turn and try again.";
     case "unsupported-codec":
       return "The recording format is not supported. Try an up-to-date browser with microphone support.";
+    case "unsupported-audio-target":
+      return "Audio translation to that language is not supported. Whisper's audio translation only produces English — translate the text instead.";
     case "unauthenticated":
       return "Your session has expired. Sign in again, then retry the turn.";
     case "not-found":
