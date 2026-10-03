@@ -46,7 +46,7 @@ const CYCLE_MAX_JOBS_LIMIT = 10;
 const FAILURE_CODE_PATTERN = /^[A-Z][A-Z0-9_]{0,63}$/;
 const WORKER_ID_PATTERN = /^[A-Za-z0-9._-]{1,64}$/;
 
-const jobStatus = v.union(
+export const jobStatus = v.union(
   v.literal("queued"),
   v.literal("running"),
   v.literal("succeeded"),
@@ -150,7 +150,9 @@ async function settleJob(
     ...extra,
   });
   const document = await ctx.db.get(job.documentId);
-  if (document !== null && document.ownerId === job.ownerId && document.projectId === job.projectId) {
+  // S22: a tombstoned document is already hidden and mid-cleanup; a late
+  // settle must not resurrect its status surface.
+  if (document !== null && document.ownerId === job.ownerId && document.projectId === job.projectId && document.deletedAt === undefined) {
     await ctx.db.patch(document._id, {
       status: status === "succeeded" ? "ready" : "failed",
       failureCode,
@@ -266,7 +268,9 @@ export const getJobContext = internalQuery({
     const job = await ctx.db.get(args.jobId);
     if (job === null) return null;
     const document = await ctx.db.get(job.documentId);
-    if (document === null || document.ownerId !== job.ownerId || document.projectId !== job.projectId) return null;
+    // A deleted document stops ingestion before any byte is read: its blob may
+    // already be purged, and a late run must not recreate chunks for it.
+    if (document === null || document.ownerId !== job.ownerId || document.projectId !== job.projectId || document.deletedAt !== undefined) return null;
     return {
       ownerId: job.ownerId,
       projectId: job.projectId,
@@ -512,7 +516,7 @@ export const markUnsupported = internalMutation({
   },
 });
 
-const jobStatusResult = v.object({
+export const jobStatusResult = v.object({
   _id: v.id("ingestionJobs"),
   documentId: v.id("documents"),
   status: jobStatus,
@@ -525,7 +529,27 @@ const jobStatusResult = v.object({
   updatedAt: v.number(),
 });
 
-/** The client-facing job status surface: metadata only, never content. */
+/**
+ * The client-facing job status surface: metadata only, never content.
+ * `listDocumentStatuses` (S22) reuses this shape so the document list and the
+ * job list show exactly the same server truth.
+ */
+export function toJobStatus(job: Doc<"ingestionJobs">, defaultMaxAttempts: number) {
+  return {
+    _id: job._id,
+    documentId: job.documentId,
+    status: job.status,
+    attempts: job.attempts,
+    maxAttempts: job.maxAttempts ?? defaultMaxAttempts,
+    failureCode: job.failureCode ?? null,
+    nextAttemptAt: job.nextAttemptAt ?? null,
+    chunkCount: job.chunkCount ?? null,
+    createdAt: job.createdAt,
+    updatedAt: job.updatedAt,
+  };
+}
+
+/** The client-facing job status list for one owned project. */
 export const listIngestionJobs = query({
   args: { projectId: v.id("projects") },
   returns: v.array(jobStatusResult),
@@ -538,18 +562,7 @@ export const listIngestionJobs = query({
       .order("desc")
       .collect();
     const defaultMaxAttempts = configuredMaxAttempts();
-    return jobs.map((job) => ({
-      _id: job._id,
-      documentId: job.documentId,
-      status: job.status,
-      attempts: job.attempts,
-      maxAttempts: job.maxAttempts ?? defaultMaxAttempts,
-      failureCode: job.failureCode ?? null,
-      nextAttemptAt: job.nextAttemptAt ?? null,
-      chunkCount: job.chunkCount ?? null,
-      createdAt: job.createdAt,
-      updatedAt: job.updatedAt,
-    }));
+    return jobs.map((job) => toJobStatus(job, defaultMaxAttempts));
   },
 });
 
