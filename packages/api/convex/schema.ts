@@ -72,6 +72,72 @@ export default defineSchema({
     eventType: v.string(),
     createdAt: v.number(),
   }).index("by_owner_project", ["ownerId", "projectId"]),
+  /**
+   * S14 one row per submitted tutor turn, keyed by (ownerId, projectId,
+   * turnId). It is the linearization point for idempotency and cancellation:
+   * `beginTurn` inserts it before any provider work, a retry with the same
+   * `turnId` observes the existing row instead of starting a second attempt,
+   * `cancelTurn` flips a `running` row to `cancelled`, and `commitTurn` writes
+   * messages/citations only while the row is still `running` under the same
+   * `attemptToken`. `retrievedChunkIds` records exactly which chunks scoped
+   * retrieval returned for this turn, so a citation written later must be a
+   * member of that set. All optional columns are additive: an interrupted row
+   * reads as running with an expired lease and is taken over by the next
+   * attempt.
+   */
+  tutorTurns: defineTable({
+    ownerId: v.string(),
+    projectId: v.id("projects"),
+    sessionId: v.id("learningSessions"),
+    turnId: v.string(),
+    status: v.union(v.literal("running"), v.literal("completed"), v.literal("cancelled"), v.literal("failed")),
+    attempts: v.number(),
+    attemptToken: v.optional(v.string()),
+    leaseExpiresAt: v.optional(v.number()),
+    learnerText: v.string(),
+    retrievedChunkIds: v.array(v.id("documentChunks")),
+    evidence: v.optional(
+      v.object({
+        status: v.union(v.literal("ok"), v.literal("insufficient-evidence")),
+        reason: v.union(v.null(), v.string()),
+      }),
+    ),
+    answerBasis: v.optional(v.union(v.literal("document-backed"), v.literal("general-explanation"))),
+    failureCode: v.optional(v.string()),
+    providerAttempts: v.optional(v.number()),
+    unresolvedMarkers: v.optional(v.number()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+    endedAt: v.optional(v.number()),
+  })
+    .index("by_owner_project", ["ownerId", "projectId"])
+    .index("by_owner_project_turn", ["ownerId", "projectId", "turnId"])
+    .index("by_owner_project_session", ["ownerId", "projectId", "sessionId"]),
+  /**
+   * S14 stored citation references attached to a tutor message. The chunk is
+   * the citation's identity: `documentId`/`seq`/`contentHash`/`page`/`heading`
+   * are copied from the owned chunk row at write time, never from a caller, so
+   * a citation can only ever describe a chunk this owner's retrieval actually
+   * returned for the turn (`tutorTurns.retrievedChunkIds`). Rendering
+   * re-checks every row against the live chunk and document before display.
+   */
+  citations: defineTable({
+    ownerId: v.string(),
+    projectId: v.id("projects"),
+    messageId: v.id("messages"),
+    turnId: v.string(),
+    rank: v.number(),
+    retrievalRank: v.number(),
+    documentId: v.id("documents"),
+    chunkId: v.id("documentChunks"),
+    seq: v.number(),
+    contentHash: v.string(),
+    page: v.union(v.null(), v.number()),
+    heading: v.union(v.null(), v.string()),
+  })
+    .index("by_owner_project", ["ownerId", "projectId"])
+    .index("by_message", ["messageId"])
+    .index("by_owner_project_turn", ["ownerId", "projectId", "turnId"]),
   /** Generic private storage ownership. S08 adds document metadata/ingestion separately. */
   privateFiles: defineTable({
     ownerId: v.string(),

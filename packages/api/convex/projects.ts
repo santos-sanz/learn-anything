@@ -177,12 +177,13 @@ export const deleteProjectBatch = mutation({ args: { projectId: v.id("projects")
   }
   const files = await ctx.db.query("privateFiles").withIndex("by_owner_project", (q) => q.eq("ownerId", ownerId).eq("projectId", args.projectId)).take(args.limit - deleted);
   for (const file of files) { await deleteStoredBlob(ctx, file.storageId); await ctx.db.delete(file._id); deleted += 1; }
-  for (const table of ["chunkEmbeddings", "documentChunks", "ingestionJobs", "messages", "learningSessions", "learningGoals", "progressEvents"] as const) {
+  // S14: a turn's citations and its turn row follow the messages they hang on.
+  for (const table of ["chunkEmbeddings", "documentChunks", "ingestionJobs", "citations", "messages", "tutorTurns", "learningSessions", "learningGoals", "progressEvents"] as const) {
     if (deleted >= args.limit) break;
     const records = await ctx.db.query(table).withIndex("by_owner_project", (q) => q.eq("ownerId", ownerId).eq("projectId", args.projectId)).take(args.limit - deleted);
     for (const record of records) { await ctx.db.delete(record._id); deleted += 1; }
   }
-  const remaining = await Promise.all((["documents", "privateFiles", "chunkEmbeddings", "documentChunks", "ingestionJobs", "messages", "learningSessions", "learningGoals", "progressEvents"] as const).map((table) => ctx.db.query(table).withIndex("by_owner_project", (q) => q.eq("ownerId", ownerId).eq("projectId", args.projectId)).take(1)));
+  const remaining = await Promise.all((["documents", "privateFiles", "chunkEmbeddings", "documentChunks", "ingestionJobs", "citations", "messages", "tutorTurns", "learningSessions", "learningGoals", "progressEvents"] as const).map((table) => ctx.db.query(table).withIndex("by_owner_project", (q) => q.eq("ownerId", ownerId).eq("projectId", args.projectId)).take(1)));
   if (remaining.some((records) => records.length > 0)) return { completed: false, deleted };
   await ctx.db.delete(args.projectId); return { completed: true, deleted };
 } });
