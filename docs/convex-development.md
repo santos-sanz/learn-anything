@@ -123,6 +123,105 @@ Configuration reuses `NAN_API_KEY` and `NAN_DEPLOYER_ID` (same single-user polic
 
 Offline tests: `packages/api/tests/translation.test.ts` (Whisper English-output contract against a mocked adapter, unsupported-combination fallbacks, two-user isolation, policy and typed limits, CORS preflight), `packages/worker/tests/translation-eval.test.ts` with `tests/fixtures/translation-pairs.json` (reviewed synthetic bilingual pairs, meaning preservation and injection resistance), `packages/worker/tests/translation-prompt.test.ts` (prompt isolation, delimiter smuggling, English-only audio contract), and the UI suites in `packages/app/tests`. Nothing performs a live NaN/Whisper/LLM call in CI. S18 adds no schema table and no version-marker bump: rollback is a plain code rollback, and `convex/_generated/api.d.ts` gained the new `translation` module entry by hand for the same reason as S15 (offline `npx convex codegen` needs a configured deployment).
 
+## S12 vector search and the 4096-dimension spike
+
+**The dimensional contradiction is resolved in favour of 4096.** The spike ran
+on 2026-10-03 against the existing FREE dev deployment
+(`andres-sanz:learn-anything-8b91f:dev/issue-7-s03`, `https://charming-duck-160.convex.cloud`)
+with the pinned SDK/CLI `convex@1.43.0`:
+
+- `npx convex dev --once` accepted a schema containing
+  `.vectorIndex("by_embedding", { vectorField: "embedding", dimensions: 4096, filterFields: [...] })`
+  and printed `✔ Convex functions ready!`; the index diff line for the
+  4096-dimension index was
+  `chunkEmbeddings.by_embedding (vector)   embedding (4096 dimensions), filters on ownerId, projectId`.
+- A production `searchProjectVectors` call with a real 4096-float query vector
+  returned ranked rows with `_score` values from the live ANN index (scores
+  0.0466..0.0324 top-5 for the recorded sample query). The guide's stated range
+  (2–4096) is what the platform enforces; the generated `VectorIndexConfig`
+  API-reference note of 2–2048 is stale doc-comment text in the pinned SDK
+  (it compiles into `dimensions: number` with no runtime check at that bound).
+- Denial paths on the deployment, in order: anonymous → `UNAUTHENTICATED`
+  (before retrieval), cross-owner project → `NOT_FOUND` (before retrieval),
+  3-wide query vector → `VECTOR_DIMENSION_INVALID` (after authorization, before
+  retrieval), `limit: 51` → `INVALID_ARGUMENT`.
+- Platform probe: a raw 2048-wide row inserted *around* the typed mutation was
+  accepted into the table (the platform excludes wrong-width rows from the
+  index instead of rejecting the document), which is exactly why
+  `commitEmbeddings` rejects wrong widths itself with
+  `EMBEDDING_DIMENSION_MISMATCH` — storage never accepts them.
+
+`convex-test` (0.0.60) emulates vector search with brute-force cosine and does
+**not** enforce index dimensions, so offline tests prove the authorization,
+filter, recheck, ordering and rejection logic while the deployment spike is the
+only evidence for the platform limit itself.
+
+### Schema and query contract
+
+`chunkEmbeddings` stores one row per current-version chunk:
+`ownerId`, `projectId`, server-derived `scopeKey` (`"ownerId:projectId"`),
+`documentId`, `chunkId`, `contentVersionKey`, `seq`, `model`, `modelVersion`,
+`dimensions`, `embedding: v.array(v.float64())`, `embeddedAt`. The index
+declares `dimensions: 4096` and `filterFields: ["ownerId", "projectId", "scopeKey"]`.
+Convex vector filter expressions expose only `q.eq`/`q.or` (no AND), so the
+single `scopeKey` equality is what binds owner AND project *before* retrieval;
+`ownerId`/`projectId` remain declared filterFields and are re-enforced on every
+hit by `recheckSearchHits` (owner, project, chunk existence and content version)
+before anything is returned as context.
+
+`searchProjectVectors` (action) orders its work: authentication → project
+ownership (`NOT_FOUND` for foreign/deleted) → query-vector width/finite checks
+→ filtered `ctx.vectorSearch` → per-hit ownership recheck. Typed errors:
+`UNAUTHENTICATED`, `NOT_FOUND`, `VECTOR_DIMENSION_INVALID`, `VECTOR_MALFORMED`,
+`INVALID_ARGUMENT`. Storage-side typed errors from `commitEmbeddings`:
+`EMBEDDING_MODEL_MISMATCH`, `EMBEDDING_DIMENSION_MISMATCH`, `EMBEDDING_MALFORMED`,
+plus scope errors `NOT_FOUND`/`JOB_NOT_RUNNING`/`CONTENT_VERSION_CONFLICT`.
+The ingestion action embeds through the S11 adapter (batches ≤ 32 inputs and
+≤ 24,000 joined characters), failing the job visibly with codes such as
+`EMBEDDING_NOT_CONFIGURED`, `NAN_POLICY_BLOCKED` or `NAN_MALFORMED_RESPONSE`
+instead of skipping retrieval setup.
+
+### Quota, benchmark and operational limits
+
+Each vector search is billed the **full index size in query-GB regardless of
+filters or result count** (Convex docs "Costs"), so tenant filters protect
+scope, not per-tenant billing. The benchmark corpus was 550 synthetic
+4096-dimensional rows (500 + 50 across two synthetic tenants):
+
+- Raw vector bytes: 550 × 4096 × 8 B = 18,022,400 B ≈ 0.018 GB → about
+  166,000 searches per Free month (3,000 query-GB) on a raw-byte basis; the
+  platform's measured index size (ANN overhead) is larger and is what actually
+  bills — recheck it in the dashboard's search storage before relying on the
+  arithmetic.
+- Search-storage ceiling: 0.5 GB ÷ 32 KiB ≈ 16,384 vectors raw — roughly
+  1,000 documents at a typical ~15 chunks, far fewer for 500+ chunk documents.
+  Exhaustion must fail visibly, never trigger a paid upgrade.
+- Benchmark on the deployment through the production action (100 rounds,
+  synthetic topic centroids, gold = same-topic chunks):
+  **recall@10 = 0.99, p50 = 18.8 ms, p95 = 137.8 ms, p99 = 203.7 ms,
+  mean = 30.9 ms, max = 368.3 ms, 0 failures**. Latency is measured in-action
+  around `ctx.runAction(searchProjectVectors)` and therefore excludes CLI/HTTP
+  client overhead.
+- A single function execution may read at most **16 MiB**, which 500+ 32 KiB
+  vectors exceed; every embedding-touching path is windowed accordingly
+  (`commitEmbeddings` ≤ 32 vectors/commit, stale sweep ≤ 100 rows/call,
+  `deleteProjectBatch` rows ≤ 100 per call).
+- NaN's `qwen3-embedding` documents 60 RPM and a batch size of 32; the
+  embedding stage batches within both, and provider failures surface as typed
+  job failure codes on the normal retry/dead-letter path.
+
+### Migration and rollback
+
+Schema/function version 7 adds only the new (initially empty) `chunkEmbeddings`
+table and index; `bootstrapSchemaV7` is a marker-only adoption that keeps the
+idempotent `nextAttemptAt` backfill for pre-v6 deployments. The dev deployment
+currently reports `foundSchemaVersion: null`, so run
+`npx convex run internal.migrations.bootstrapSchemaV7 '{}'` after deploying this
+release to make `checkCompatibility` pass. Rollback is a code rollback: older
+releases ignore the new table, no rows carry old-only data, and no backfill has
+to be reversed; the vector index can be removed by pushing a schema without it
+once no release queries it.
+
 ## Plan and operational limits
 
 The selected plan is **Convex Free**, never metered Starter. Checked limits: 0.5 GB database, 1 GB/month database I/O, 1 GB file storage, 1 GB/month data egress, 0.5 GB search storage, 3,000 query-GB/month search and 1 million function calls/month. Reconfirm actual plan and current limits at any authorized provisioning/deployment; quota exhaustion must fail visibly and must not trigger paid upgrade. Roll back a failed release by redeploying the previous compatible commit; do not downgrade a populated schema until data compatibility is assessed.

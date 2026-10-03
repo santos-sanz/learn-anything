@@ -56,7 +56,7 @@ No provider requests should be made during ordinary CI. Tests use synthetic fixt
 
 ## Vector compatibility and Free-plan gates
 
-NaN documents `qwen3-embedding` as 4096-dimensional. Convex's current vector-search guide and platform limits permit 2-4096 dimensions, but its generated `VectorIndexConfig` API reference still says 2-2048. S12 must verify index creation and a real query against the pinned SDK/deployment before declaring compatibility. Do not truncate vectors or change provider silently. Use owner/project filter fields before retrieval, recheck ownership of returned IDs, and apply NaN rerank to candidates.
+NaN documents `qwen3-embedding` as 4096-dimensional. Convex's current vector-search guide and platform limits permit 2-4096 dimensions, but its generated `VectorIndexConfig` API reference still says 2-2048. Verified by the S12 capability spike on 2026-10-03 with the pinned `convex@1.43.0` SDK against the free development deployment: a 4096-dimension index was created and a real query returned ranked results, so the platform enforces the guide's 2-4096 range and the API-reference note is stale documentation. Do not truncate vectors or change provider silently. Use owner/project filter fields before retrieval, recheck ownership of returned IDs, and apply NaN rerank to candidates.
 
 Convex vector search runs in actions, not queries, and uses fixed-length `v.array(v.float64())` vectors. Each search charges the whole index size in query-GB, regardless of tenant filters or number of results. Filters protect scope, not per-tenant billing isolation.
 
