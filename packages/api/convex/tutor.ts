@@ -1116,18 +1116,25 @@ export const runTurn = action({
       // S19 practice history: recorded only for a configured language-practice
       // tutor turn (a routed translation is not a practised topic). The write
       // is idempotent per turnId, so a replayed commit never duplicates it;
-      // it runs after the committed result so a history failure can never
-      // roll back or mask an already-committed turn.
+      // it runs strictly after the committed result and is deliberately
+      // non-fatal: a history failure is logged and swallowed so it can never
+      // roll back, mask or fail an already-committed turn. Authorization
+      // inside `recordPractisedTopic` (owner and session re-check) is
+      // unchanged - a rejected write simply records nothing.
       if (languageConfig !== null && translationRoute === null) {
-        await ctx.runMutation(internal.languagePractice.recordPractisedTopic, {
-          ownerId,
-          projectId: args.projectId,
-          sessionId,
-          turnId,
-          topic: practisedTopicFor(text, args.practisedTopic),
-          level: languageConfig.level,
-          targetLanguage: languageConfig.targetLanguage,
-        });
+        try {
+          await ctx.runMutation(internal.languagePractice.recordPractisedTopic, {
+            ownerId,
+            projectId: args.projectId,
+            sessionId,
+            turnId,
+            topic: practisedTopicFor(text, args.practisedTopic),
+            level: languageConfig.level,
+            targetLanguage: languageConfig.targetLanguage,
+          });
+        } catch (error) {
+          console.error("[S19] practised-topic history write failed; returning the committed turn unchanged", error);
+        }
       }
 
       return committed;

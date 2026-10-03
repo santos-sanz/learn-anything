@@ -167,8 +167,11 @@ export default defineSchema({
     sessionId: v.id("learningSessions"),
     turnId: v.string(),
     topic: v.string(),
-    level: v.string(),
-    targetLanguage: v.string(),
+    // Typed at the storage layer, not just at the write arguments: only the
+    // S19 practice sets can ever enter history, so a garbage level or an
+    // unsupported target language is rejected by the schema itself.
+    level: v.union(v.literal("beginner"), v.literal("intermediate"), v.literal("advanced")),
+    targetLanguage: v.union(v.literal("en"), v.literal("es")),
     createdAt: v.number(),
   })
     .index("by_owner_project", ["ownerId", "projectId"])

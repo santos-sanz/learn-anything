@@ -19,10 +19,12 @@ import { buildTutorSystemPrompt, type TutorEvidenceMode } from "./prompt.js";
  *    text are never inputs, so an instruction written inside an uploaded
  *    document still cannot reach - let alone override - the system message.
  * 2. The tutor stays in the configured learning language. The single exception
- *    is an explicit learner translation request, which `detectTranslationRoute`
- *    hands to the S18 translation task (the same tested prompt contract the
+ *    is an explicit learner translation request - an addressed request framing
+ *    that carries a target-language cue - which `detectTranslationRoute` hands
+ *    to the S18 translation task (the same tested prompt contract the
  *    `/translation/text` route uses) instead of silently switching the
- *    conversation into another language.
+ *    conversation into another language. Ordinary practice text, statements
+ *    and questions that merely mention translation never route.
  * 3. The mode never claims certification or pronunciation accuracy: history
  *    records practised topics only, and the prompt carries explicit
  *    prohibitions against proficiency and text-based pronunciation claims.
@@ -193,12 +195,65 @@ export interface TranslationRoute {
   readonly sourceText: string;
 }
 
-/** Explicit intent only: translate/traduc* cues. Ambiguity never routes. */
-const INTENT_PATTERNS: readonly RegExp[] = [
+/**
+ * Wrapper words removed from an already-accepted request so only the payload
+ * remains. These are never a routing signal on their own (see
+ * `REQUEST_PATTERNS`/`QUESTION_PATTERNS`), only a stripping aid.
+ */
+const STRIP_PATTERNS: readonly RegExp[] = [
   /\btranslat(?:e|es|ed|ing|ion)\b/iu,
   /\btraduc(?:e|es|ed|ing|ion|ción|ir|ía|i)?\b/iu,
   /\bwhat\b[^?]{0,200}?\bmean(?:s|ing)?\b/iu,
 ];
+
+/**
+ * Framings that address the tutor with an actual translation ask. The bare
+ * presence of `translate`/`translation`/`traducir` anywhere in a sentence is
+ * never a request, so none of these matches a practice utterance, a statement
+ * about translation or a question about translation as a topic:
+ *
+ * - English imperative/polite request at a sentence boundary or after
+ *   `please` (`Translate …`, `please translate …`, `Could you translate …`,
+ *   `I'd like you to translate …`, `help me translate …`),
+ * - Spanish imperative/polite request at a sentence boundary (`Traduce …`,
+ *   `Tradúcelo …`, `Dilo en inglés`, `¿Puedes traducir …?`, `Por favor …`),
+ *   rejecting the infinitive forms that open a statement (`Traducir … es …`).
+ *
+ * Patterns are tested on accent-folded text (`Tradúcelo` ≡ `traducelo`,
+ * `Dilo` ≡ `dilo`); folding only decomposes letters, so sentence punctuation
+ * anchors keep their meaning. Even a matched framing still needs a
+ * target-language cue or quoted payload before anything routes.
+ */
+const REQUEST_PATTERNS: readonly RegExp[] = [
+  // English imperative / polite request.
+  /(?:^|[.!?…]\s+|\bplease\s+)(?:translate|interpret)\b/iu,
+  /\b(?:can|could|would|will|may)\s+(?:you\s+)?(?:please\s+)?(?:interpret|translat(?:e|ing))\b/iu,
+  /\bi(?:'d|\s+would)\s+like\s+you\s+to\s+(?:please\s+)?(?:translate|interpret)\b/iu,
+  /\bhelp\s+me\s+(?:to\s+)?(?:translate|interpret)\b/iu,
+  // Spanish polite request with an infinitive object (`¿Puedes traducir …?`).
+  /(?:^|[.!?…]\s+|\bpor\s+favor\b[^.?!]{0,40}?)(?:\?\s*)?(?:¿\s*)?(?:me\s+)?(?:puedes|puede|podrias|podria|quieres|quiere)\s+(?:traducir|interpretar|decir)[a-z]{0,12}\b/iu,
+  // Spanish imperative at a sentence boundary; `traducir`/`interpretar` are
+  // rejected so an infinitive-led statement never counts as a request.
+  /(?:^|[.!?…]\s+|\bpor\s+favor\b[^.?!]{0,40}?)(?:\?\s*)?(?:¿\s*)?(?:tradu(?!cir)|interpret(?!ar))[a-z]{0,14}\b/iu,
+  /(?:^|[.!?…]\s+)(?:\?\s*)?(?:¿\s*)?d(?:ilo|iga|igalo|ganlo|iganlo)\b/iu,
+];
+
+/**
+ * Rendering questions (`what does X mean in English`, `how do you say X in
+ * Spanish`, `¿Qué significa X en inglés?`). They only count as a request when
+ * a target language is named: a vocabulary/grammar question such as
+ * "What does the tutor mean by subjunctive?" carries no cue and never routes.
+ */
+const QUESTION_PATTERNS: readonly RegExp[] = [
+  /\bwhat(?:'s|\s+is|\s+does|\s+do)\s+[^?]{0,220}?\b(?:mean|meaning|translation|translations|equivalent)\b/iu,
+  /\bhow\s+(?:do|would|can|could|does)\s+(?:you|i)\s+(?:say|put|write|translate)\b/iu,
+  /(?:^|[.!?…]\s+)¿?\s*(?:que\s+significa|como\s+se\s+dice|cual\s+es\s+(?:la\s+)?traduccion)\b/iu,
+];
+
+/** Decomposes accents so one Spanish pattern covers every written form. */
+function foldAccents(text: string): string {
+  return text.normalize("NFD").replace(/\p{M}+/gu, "");
+}
 
 const QUOTED_PATTERNS: readonly RegExp[] = [
   /"([^"]{1,4000})"/gu,
@@ -216,10 +271,17 @@ const DIRECTION_PHRASES: readonly RegExp[] = [
 ];
 
 const FILLER_WORDS =
-  /\b(?:please|translate|translation|translated|translating|traducir|traduce|traducción|me|this|that|it|the|following|sentence|word|phrase|what|does|do|you|mean|meaning|say|says)\b/giu;
+  /\b(?:please|translate|translation|translated|translating|traducir|traduce|traducción|interpretar|interpreta|d[ií]lo|d[ií]ga|d[ií]gan|d[ií]galo|favor|puedes|puede|me|this|that|it|the|following|sentence|word|phrase|what|does|do|you|mean|meaning|say|says)\b/giu;
 
-function hasIntent(text: string): boolean {
-  return INTENT_PATTERNS.some((pattern) => pattern.test(text));
+/**
+ * Classifies a sentence as an addressed request, a rendering question or -
+ * everything else, including every reported false positive - not a request.
+ */
+function requestFraming(text: string): "request" | "question" | null {
+  const probe = foldAccents(text);
+  if (REQUEST_PATTERNS.some((pattern) => pattern.test(probe))) return "request";
+  if (QUESTION_PATTERNS.some((pattern) => pattern.test(probe))) return "question";
+  return null;
 }
 
 /** The last language named in the request reads as the translation target. */
@@ -247,7 +309,7 @@ function longestQuoted(text: string): string | null {
 /** Strips the request wrapper so only the text to translate remains. */
 function stripRequestCues(text: string): string {
   let out = text;
-  for (const pattern of INTENT_PATTERNS) out = out.replace(new RegExp(pattern.source, pattern.flags.replace("g", "") + "g"), " ");
+  for (const pattern of STRIP_PATTERNS) out = out.replace(new RegExp(pattern.source, pattern.flags.replace("g", "") + "g"), " ");
   for (const phrase of DIRECTION_PHRASES) out = out.replace(phrase, " ");
   out = out.replace(FILLER_WORDS, " ");
   return out
@@ -265,23 +327,34 @@ function otherLanguage(language: TranslationLanguage): TranslationLanguage {
  * Detects an explicit learner translation request in language-practice mode
  * and routes it to the S18 translation task. Conservative by construction:
  *
- * - an explicit intent cue (`translate`/`traduc*`) is required,
+ * - the sentence must address the tutor: an imperative/polite request framing
+ *   (`REQUEST_PATTERNS`) or a rendering question (`QUESTION_PATTERNS`). The
+ *   words `translate`/`translation`/`traducir` appearing in a practice
+ *   utterance, a statement or a question about translation as a topic are
+ *   never a request and never route,
+ * - it must carry a target-language cue: a named language ("into English",
+ *   "al español"), or - for an imperative only - a quoted payload. A
+ *   rendering question without a named language never routes, so vocabulary
+ *   and grammar questions stay normal tutor turns,
  * - the source text is the longest quoted segment, else the request with its
  *   wrapper stripped; an empty remainder never routes,
- * - a named language ("into English", "al español") is the target; without
- *   one, the target is the learner's other language and the source is the
- *   practice language (quoted text is assumed to be the language practised),
+ * - the named language is the target; without one the target is the learner's
+ *   other language and the source is the practice language (quoted text is
+ *   assumed to be the language practised),
  *
  * anything else returns `null` and the turn stays a normal language-practice
  * turn - the tutor never switches language on its own.
  */
 export function detectTranslationRoute(learnerText: string, config: LanguagePracticeConfig): TranslationRoute | null {
   const text = learnerText.trim();
-  if (text === "" || !hasIntent(text)) return null;
-  const quoted = longestQuoted(text);
-  const sourceText = quoted ?? stripRequestCues(text);
-  if (sourceText === null || sourceText === "" || sourceText.length < 2) return null;
+  if (text === "") return null;
+  const framing = requestFraming(text);
+  if (framing === null) return null;
   const named = namedTargetLanguage(text);
+  const quoted = longestQuoted(text);
+  if (named === null && (framing === "question" || quoted === null)) return null;
+  const sourceText = quoted ?? stripRequestCues(text);
+  if (sourceText === "" || sourceText.length < 2) return null;
   if (named === null) {
     const target = otherLanguage(config.targetLanguage);
     return { handledBy: "s18-translation", source: config.targetLanguage, target, sourceText };

@@ -620,10 +620,129 @@ test("(f) history records practised topics without any proficiency claim", async
 });
 
 /* ------------------------------------------------------------------ *
+ * history storage is typed and never fails a committed turn
+ * ------------------------------------------------------------------ */
+
+test("(g) history rows accept only the S19 level and target-language sets", async () => {
+  const t = makeTest();
+  const projectId = await seedProject(t, "learner-a", {
+    name: "Spanish",
+    mode: "language-practice",
+    languagePractice: defaultSettings(),
+  });
+  const sessionId = (await t.run(async (ctx) =>
+    ctx.db.insert("learningSessions", { ownerId: "learner-a", projectId: projectId as never, sessionKey: "default", createdAt: 1, endedAt: null }),
+  )) as string;
+
+  const insertRow = (level: string, targetLanguage: string) =>
+    t.run(async (ctx) =>
+      ctx.db.insert("practisedTopics", {
+        ownerId: "learner-a",
+        projectId: projectId as never,
+        sessionId: sessionId as never,
+        turnId: `turn-${level}-${targetLanguage}`,
+        topic: "Daily conversation",
+        level: level as never,
+        targetLanguage: targetLanguage as never,
+        createdAt: Date.now(),
+      }),
+    );
+
+  // Allowed values enter storage...
+  await expect(insertRow("beginner", "es")).resolves.toBeTruthy();
+  await expect(insertRow("advanced", "en")).resolves.toBeTruthy();
+  // ...garbage is rejected by the schema itself, not only by the write args.
+  await expect(insertRow("expert", "es")).rejects.toThrow();
+  await expect(insertRow("beginner", "klingon")).rejects.toThrow();
+  await expect(insertRow("B1", "fr")).rejects.toThrow();
+
+  // The stored rows and the owner-only read carry only typed values.
+  const raw = await allRows<{ level: string; targetLanguage: string }>(t, "practisedTopics");
+  expect(raw).toHaveLength(2);
+  for (const row of raw) {
+    expect(["beginner", "intermediate", "advanced"]).toContain(row.level);
+    expect(["en", "es"]).toContain(row.targetLanguage);
+  }
+  const history = await queryAs<{ topics: Array<{ level: string; targetLanguage: string }> }>(
+    t,
+    "learner-a",
+    api.languagePractice.listPractisedTopics,
+    { projectId },
+  );
+  expect(history.topics).toHaveLength(2);
+
+  // The internal write re-validates its arguments before touching storage.
+  await expect(
+    mutationAs(t, "learner-a", internal.languagePractice.recordPractisedTopic, {
+      ownerId: "learner-a",
+      projectId,
+      sessionId,
+      turnId: "turn-bad-args",
+      topic: "Daily conversation",
+      level: "expert",
+      targetLanguage: "klingon",
+    }),
+  ).rejects.toThrow();
+  expect(await allRows<unknown>(t, "practisedTopics")).toHaveLength(2);
+});
+
+test("(h) a failing history write never fails an already-committed turn", async () => {
+  const t = makeTest();
+  const projectId = await seedProject(t, "learner-a", {
+    name: "Spanish",
+    mode: "language-practice",
+    languagePractice: defaultSettings(),
+  });
+
+  // Corrupt the idempotency read: two rows for the same (owner, project,
+  // turn) make the `.unique()` lookup inside `recordPractisedTopic` throw
+  // after the turn has already committed.
+  await t.run(async (ctx) => {
+    for (let index = 0; index < 2; index += 1) {
+      const corruptSession = await ctx.db.insert("learningSessions", {
+        ownerId: "learner-a",
+        projectId: projectId as never,
+        sessionKey: `corrupt-${index}`,
+        createdAt: 1,
+        endedAt: null,
+      });
+      await ctx.db.insert("practisedTopics", {
+        ownerId: "learner-a",
+        projectId: projectId as never,
+        sessionId: corruptSession as never,
+        turnId: "turn-history-failure",
+        topic: `corrupt ${index}`,
+        level: "beginner",
+        targetLanguage: "es",
+        createdAt: 1,
+      });
+    }
+  });
+
+  const result = await runTurn(t, "learner-a", {
+    projectId,
+    turnId: "turn-history-failure",
+    text: "Quiero practicar la conversación de todos los días.",
+  });
+
+  // The committed turn is returned as success: the history failure is logged
+  // server-side and never surfaces to the caller, never rolls the turn back.
+  expect(result.status).toBe("completed");
+  expect(result.text).toBeTruthy();
+  const turn = await queryAs<{ status: string; answerBasis: string } | null>(t, "learner-a", api.tutor.getTurn, {
+    projectId,
+    turnId: "turn-history-failure",
+  });
+  expect(turn?.status).toBe("completed");
+  expect(turn?.answerBasis).toBe("general-explanation");
+  expect(await allRows<{ role: string }>(t, "messages")).toHaveLength(2);
+});
+
+/* ------------------------------------------------------------------ *
  * other modes are untouched
  * ------------------------------------------------------------------ */
 
-test("(g) concept-learning and unconfigured projects never get language-practice behaviour", async () => {
+test("(i) concept-learning and unconfigured projects never get language-practice behaviour", async () => {
   const t = makeTest();
   const concept = await seedProject(t, "learner-a", {
     name: "Biology",

@@ -43,6 +43,60 @@ test("ordinary practice text in any language never routes to translation", () =>
   expect(detectTranslationRoute("", spanishPractice)).toBeNull();
 });
 
+test("sentences that merely mention translation or ask about a word never route", () => {
+  const spanishPractice = config();
+  const englishPractice = config({ targetLanguage: "en" });
+  const neverRoute = [
+    // (1) a practice utterance that uses the verb translate.
+    "I translate books every day",
+    // (2) a statement about translation as a vocabulary word.
+    "The word translation is hard to spell",
+    // (3) a Spanish practice sentence with the infinitive traducir.
+    "Me gusta traducir canciones",
+    // (4) a vocabulary/grammar question addressed to the tutor.
+    "What does the tutor mean by subjunctive?",
+    // More of the same shape: no target-language cue, no request framing.
+    "Yesterday I translated two articles for class.",
+    "La traducción de esta palabra es difícil.",
+    "What is translation?",
+    "Do you translate English to Spanish?",
+  ];
+  for (const text of neverRoute) {
+    expect(detectTranslationRoute(text, spanishPractice)).toBeNull();
+    expect(detectTranslationRoute(text, englishPractice)).toBeNull();
+  }
+});
+
+test("an explicit request with a target-language cue still routes, in both supported language forms", () => {
+  // (5) English imperative request with an explicit direction.
+  expect(detectTranslationRoute("Translate this into English: buenos días", config())).toEqual({
+    handledBy: "s18-translation",
+    source: "es",
+    target: "en",
+    sourceText: "buenos días",
+  });
+
+  // (6) the Spanish request form, in both directions of the supported pair.
+  expect(detectTranslationRoute("Dilo en inglés: buenos días", config())).toEqual({
+    handledBy: "s18-translation",
+    source: "es",
+    target: "en",
+    sourceText: "buenos días",
+  });
+  expect(detectTranslationRoute("Dilo en español: good morning", config())).toEqual({
+    handledBy: "s18-translation",
+    source: "en",
+    target: "es",
+    sourceText: "good morning",
+  });
+  expect(detectTranslationRoute('¿Puedes traducir "good morning" al español?', config())).toEqual({
+    handledBy: "s18-translation",
+    source: "en",
+    target: "es",
+    sourceText: "good morning",
+  });
+});
+
 test("an explicit request with quoted text routes to S18 with the practice language as source", () => {
   const route = detectTranslationRoute('Translate "¿Dónde está la estación?"', config());
   expect(route).toEqual({

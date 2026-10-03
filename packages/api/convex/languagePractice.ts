@@ -33,8 +33,8 @@ const practisedTopicValidator = v.object({
   _id: v.id("practisedTopics"),
   turnId: v.string(),
   topic: v.string(),
-  level: v.string(),
-  targetLanguage: v.string(),
+  level: v.union(v.literal("beginner"), v.literal("intermediate"), v.literal("advanced")),
+  targetLanguage: v.union(v.literal("en"), v.literal("es")),
   createdAt: v.number(),
 });
 
