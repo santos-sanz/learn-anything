@@ -619,20 +619,22 @@ echo "OK: client bundle carries no server/secret configuration, only the intende
 pnpm lint && pnpm typecheck && pnpm test && pnpm build
 echo "OK: lint, typecheck, tests and build are green"
 
-# (7) Vercel frontend configuration shape (issue #38): parse vercel.json and
-#     assert the documented contract — output directory + security headers in
-#     the repo, the build pipeline (framework/install/build/Node) deliberately
-#     NOT overridden here (it lives in Vercel project settings), and no secret
-#     name anywhere in the file.
+# (7) Vercel frontend configuration shape (issue #38): locate the project's
+#     vercel.json (repository root, or packages/app/ if the project Root
+#     Directory moves it there) and assert the contract — security headers in
+#     the repo, the build pipeline (framework/install/build/output/Node)
+#     deliberately NOT overridden here (it lives in Vercel project settings),
+#     and no secret name anywhere in the file.
 node - <<'NODE'
 const fs = require("node:fs");
-const v = JSON.parse(fs.readFileSync("vercel.json", "utf8"));
+const path = ["vercel.json", "packages/app/vercel.json"].find((p) => fs.existsSync(p));
+if (!path) { console.error("FAIL: no vercel.json at repository root or packages/app/"); process.exit(1); }
+const v = JSON.parse(fs.readFileSync(path, "utf8"));
 const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
 const fail = (m) => { console.error("FAIL: " + m); process.exit(1); };
 for (const key of ["framework", "installCommand", "buildCommand", "devCommand", "redirects", "rewrites", "functions", "builds", "env"]) {
-  if (Object.hasOwn(v, key)) fail(key + " must stay in Vercel project settings (owner), not vercel.json");
+  if (Object.hasOwn(v, key)) fail(key + " must stay in Vercel project settings (owner), not " + path);
 }
-if (v.outputDirectory !== "packages/app/dist") fail("outputDirectory must be packages/app/dist");
 if (!pkg.engines || pkg.engines.node !== ">=22") fail("engines.node is the workspace requirement (>=22); it does not select the Vercel build Node");
 const rule = (v.headers || []).find((h) => h.source === "/(.*)");
 if (!rule) fail("missing catch-all /(.*) header rule");
@@ -653,8 +655,8 @@ for (const d of ["default-src 'self'", "base-uri 'self'", "object-src 'none'", "
 }
 if (/unsafe-(eval|inline)/.test(csp)) fail("CSP must not carry unsafe-eval/unsafe-inline");
 const secrets = ["NAN_API_KEY", "NAN_DEPLOYER_ID", "AGENT_BRIDGE_SECRET", "JWT_PRIVATE_KEY", "JWKS", "GITHUB_CLIENT_SECRET", "GOOGLE_CLIENT_SECRET", "CONVEX_DEPLOYMENT", "CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID", "CONVEX_DEPLOY_KEY"];
-for (const s of secrets) if (JSON.stringify(v).includes(s)) fail("secret name " + s + " appears in vercel.json");
-console.log("OK: vercel.json sets outputDirectory + required headers only (build pipeline in project settings), CSP strict, no secret name");
+for (const s of secrets) if (JSON.stringify(v).includes(s)) fail("secret name " + s + " appears in " + path);
+console.log("OK: " + path + " carries security headers only (build pipeline + output directory in project settings), CSP strict, no secret name");
 NODE
 ```
 
@@ -919,25 +921,43 @@ contains them.
 | Item | Where it lives | Value (observed 2026-10-03) | Why |
 | --- | --- | --- | --- |
 | `$schema` | `vercel.json` (repository) | `https://openapi.vercel.sh/vercel.json` | Editor validation against the published schema |
-| Output directory | `vercel.json` (repository), `outputDirectory` | `packages/app/dist` | Explicit and identical to what the project settings already produce |
 | Security headers | `vercel.json` (repository), `headers` | one catch-all `source: "/(.*)"` rule with six headers | Section 13.2; the security half of issue #38 |
-| Framework preset | Vercel project settings (owner) | as configured; the working build runs `pnpm run build` from the repository root | The dashboard already builds this monorepo correctly; overriding it in `vercel.json` is what broke the first preview (below) |
+| Framework preset | Vercel project settings (owner) | as configured; the working build runs `pnpm run build` from the repository root | Empirically proven below: preset/command keys in a root `vercel.json` interact badly with this project's output validation |
 | Install command | Vercel project settings (owner) | `pnpm install` (lockfile `pnpm-lock.yaml` at the repository root) | Same |
 | Build command | Vercel project settings (owner) | `pnpm run build` (workspace `pnpm -r build`, which includes `packages/app`) | `VITE_*` values are read by this build at build time |
+| Output directory | Vercel project settings (owner) | `packages/app/dist` | Same |
 | Node version | Vercel project settings (owner) | **24.x** (build log: `node v24.21.0`) | The root `engines.node` (`>=22`; CI runs 22.14.0) is the workspace requirement only — verified ignored: a `22.x` engines pin did not change Vercel's Node |
-| Root directory | Vercel project settings (owner) | repository root (install/build ran from `/vercel/path0`) | No subdirectory Root Directory |
+| Root directory | Vercel project settings (owner) | consistent with `packages/app` (see the empirical results) | Determines where `vercel.json` must live; `docs/monorepos` shows app-level `vercel.json` files |
 
-**Why the build pipeline stays out of `vercel.json`:** this PR's first
-preview (deployment `dpl_A95fJQVVyUMjUHmiQBSHU8QuZdhs`, 2026-10-03) built
-successfully and then failed validation with `STATIC_BUILD_NO_OUT_DIR`
-("No Output Directory named \"dist\" found"): specifying `"framework": "vite"`
-in `vercel.json` made the framework preset's default `dist` win over the
-explicit `outputDirectory: packages/app/dist`. The fix removed `framework`,
-`installCommand` and `buildCommand` from `vercel.json` (asserted by section 7
-step (7)); the pipeline above is recorded from the working production build
-(`dpl_AAhAshApC77`, main `d167217`, no `vercel.json`). A Node version pin is
-**not** possible from this repository: the published schema has no Node key
-and `engines.node` is ignored by Vercel here — pinning the project Node
+**Empirical results (2026-10-03, both deployments read-only via the owner's
+Vercel connection).** The Vercel Git integration auto-builds this repository;
+two previews of this branch were inspected:
+
+1. `dpl_A95fJQVVyUMjUHmiQBSHU8QuZdhs` (head `2d93ff2`; root `vercel.json`
+   with `framework`/`installCommand`/`buildCommand`/`outputDirectory`): the
+   install and build commands from the file **were** honoured and the build
+   produced `packages/app/dist`, but validation then failed
+   `STATIC_BUILD_NO_OUT_DIR` ("No Output Directory named \"dist\" found").
+2. `dpl_889pdJ7aGVNPbe8c4LTn9x1PDdFk` (head `7ae3b82`; root `vercel.json`
+   reduced to `outputDirectory: packages/app/dist` + `headers`, pipeline keys
+   removed, `engines` reverted to `>=22`): install/build again ran the
+   project defaults (`Installing dependencies...`, `pnpm run build` —
+   identical to the passing production build `dpl_AAhAshApC77` on main) and
+   again produced `packages/app/dist`, and validation again failed with the
+   same error naming `dist`, validated against the **repository root**. The
+   file's `outputDirectory` value never reached validation.
+
+Reading: the project's effective output resolution (`packages/app/dist`) comes
+from the project settings, the root `vercel.json` is at best partially applied
+for build settings, and the canonical location for this project's config is
+`packages/app/vercel.json` if the file must carry anything besides headers
+(`docs/monorepos` places app-level config inside the app directory). This PR
+therefore keeps the root `vercel.json` **headers-only**; whether the file must
+move (with `outputDirectory: dist` relative to `packages/app`) is decided by
+the owner's verification of the next preview and its served headers
+(section 13.8 item 2), then recorded here instead of guessed. A Node version
+pin is **not** possible from this repository: the published schema has no Node
+key and `engines.node` is ignored by Vercel here — pinning the project Node
 version is an owner dashboard action (section 13.8).
 
 - **No rewrites/redirects:** routing is hash-based
@@ -970,9 +990,9 @@ frame-protection header; these entries are the fix. They are frontend-only
 controls — they say nothing about the Convex/Cloudflare surfaces, and they
 are inert until the next Vercel deployment (owner authority). Offline proof
 that the entries exist with the exact values is section 7 step (7) (`OK:
-vercel.json sets outputDirectory + required headers only (build pipeline in
-project settings), CSP strict, no secret name`). Live proof, after deployment
-*(live)*:
+vercel.json carries security headers only (build pipeline + output directory
+in project settings), CSP strict, no secret name`). Live proof, after
+deployment *(live)*:
 
 ```sh
 curl -sI https://app-dun-seven-88.vercel.app/ \
@@ -1128,19 +1148,22 @@ these numbers on Vercel's limits/fair-use pages at deployment time.
    authorized secrets workflow. Issue QA shows sign-in currently fails with
    `Missing environment variable JWT_PRIVATE_KEY`; this is not fixable from
    the repository.
-2. **Deploying this configuration to Vercel.** The Vercel Git integration
-   deploys this repository automatically; the owner verifies that the next
-   preview of this branch reaches READY — the first preview of this PR
-   (`dpl_A95fJQVVyUMjUHmiQBSHU8QuZdhs`) failed `STATIC_BUILD_NO_OUT_DIR`
-   because `framework: vite` in `vercel.json` beat the explicit
-   `outputDirectory` (forensics in section 13.1; the pipeline keys were
-   removed as the fix) — then deploys/promotes to production. Dashboard-only
-   settings stay owner authority: framework preset, install/build commands,
-   Root Directory and the **Node version pin** (project Node is 24.x;
-   `engines.node` is ignored by Vercel here). Preview/production environment
-   variables `VITE_CONVEX_URL` / `VITE_CONVEX_SITE_URL` are set by name in
-   the project settings. The headers in section 13.2 take effect only with
-   that deployment.
+2. **Verifying where the header config is honoured, then deploying.** The
+   Vercel Git integration deploys this repository automatically; two previews
+   of this branch failed `STATIC_BUILD_NO_OUT_DIR` while building
+   `packages/app/dist` correctly (forensics in section 13.1), so the root
+   `vercel.json` is now headers-only. The owner verifies on the next preview:
+   (a) the deployment reaches **READY**, and (b) `curl -sI <preview-url>`
+   shows the section 13.2 headers. If the headers are **absent**, the root
+   file is being ignored (Root Directory hypothesis) and the file must move to
+   `packages/app/vercel.json` (path relative to the Root Directory;
+   `docs/monorepos` layout) — then re-verify. Dashboard-only settings stay
+   owner authority regardless: framework preset, install/build commands, Root
+   Directory, output directory (`packages/app/dist`) and the **Node version
+   pin** (project Node is 24.x; `engines.node` is ignored by Vercel here).
+   Preview/production environment variables `VITE_CONVEX_URL` /
+   `VITE_CONVEX_SITE_URL` are set by name in the project settings. The
+   headers take effect only with that deployment.
 3. **Preview/production smoke against the live URL:** sign-up/sign-in,
    `curl -I` header verification (section 13.2), and the no-secret-in-bundle
    grep against the deployed assets (section 13.4).

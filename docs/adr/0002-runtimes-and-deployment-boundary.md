@@ -51,14 +51,17 @@ general frontend.
 serves the static Vite build of `packages/app`; Convex hosts the backend
 (functions, auth, storage, HTTP actions); Cloudflare Workers Free hosts only
 the project-scoped agents. The repository carries the frontend contract it
-can own: `vercel.json` sets the output directory (`packages/app/dist`) and the
-security-header set including the microphone permission policy. The rest of
-the build contract lives in Vercel project settings (owner authority) and was
+can own: a headers-only `vercel.json` with the security-header set including
+the microphone permission policy. The output directory and the rest of the
+build contract live in Vercel project settings (owner authority) and were
 recorded from the working production build of 2026-10-03: install `pnpm
 install`, build `pnpm run build`, output `packages/app/dist`, Node version
-24.x — the root `package.json` `engines.node` (`>=22`, satisfied by CI's
-Node 22.14.0) is the workspace requirement and does **not** select the Vercel
-build Node (verified: a `22.x` engines pin was ignored by Vercel). Convex Auth
+24.x — two preview experiments on 2026-10-03 proved a root `vercel.json`
+cannot override this project's output resolution
+(`STATIC_BUILD_NO_OUT_DIR`; runbook section 13.1), and the root
+`package.json` `engines.node` (`>=22`, satisfied by CI's Node 22.14.0) is the
+workspace requirement that does **not** select the Vercel build Node
+(verified: a `22.x` engines pin was ignored by Vercel). Convex Auth
 redirect/CORS allowlists stay exact-match per environment (`SITE_URL`,
 `AUTH_REDIRECT_URIS`); Vercel preview/production origins are added as exact
 origins only, never wildcards. This ADR is documentation and configuration: it
