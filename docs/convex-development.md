@@ -213,11 +213,11 @@ scope, not per-tenant billing. The benchmark corpus was 550 synthetic
 ### Migration and rollback
 
 Schema/function version 7 adds only the new (initially empty) `chunkEmbeddings`
-table and index; `bootstrapSchemaV7` is a marker-only adoption that keeps the
-idempotent `nextAttemptAt` backfill for pre-v6 deployments. The dev deployment
-currently reports `foundSchemaVersion: null`, so run
-`npx convex run internal.migrations.bootstrapSchemaV7 '{}'` after deploying this
-release to make `checkCompatibility` pass. Rollback is a code rollback: older
+table and index; its marker migration is an adoption that keeps the idempotent
+`nextAttemptAt` backfill for pre-v6 deployments. The dev deployment currently
+reports `foundSchemaVersion: null`, so run the current marker
+(`npx convex run internal.migrations.bootstrapSchemaV10 '{}'`, see S19/S22 below)
+after deploying to make `checkCompatibility` pass. Rollback is a code rollback: older
 releases ignore the new table, no rows carry old-only data, and no backfill has
 to be reversed; the vector index can be removed by pushing a schema without it
 once no release queries it.
@@ -256,7 +256,7 @@ A candidate counts as evidence only when its score is strictly above `minScore`:
 
 ## S14 grounded tutor session/turn orchestration
 
-Schema/function version 8 adds two empty, additive tables on top of S12/S13's version 7: `tutorTurns` and `citations`. `bootstrapSchemaV8` (renamed from V7, same replace-the-marker step every version bump takes) is a marker-only adoption that keeps the idempotent `nextAttemptAt` backfill so a pre-v6 deployment is not skipped — run `npx convex run internal.migrations.bootstrapSchemaV8 '{}'` after deploying this release so `checkCompatibility` passes. Rollback is a code rollback while both tables are empty; a populated v8 deployment (turn rows or stored citations) must stay on a compatible v8+ release until a separately tested downgrade exists. `citations` and `tutorTurns` join the S04 two-phase deletion protocol in `deleteProjectBatch`, so a deleted project leaves no turn or citation rows behind. As with S15/S18, `convex/_generated/api.d.ts` gained the `tutor` module entry by hand because offline `npx convex codegen` needs a configured deployment.
+Schema/function version 8 adds two empty, additive tables on top of S12/S13's version 7: `tutorTurns` and `citations`. `bootstrapSchemaV8` (renamed forward by every later story, same replace-the-marker step every version bump takes) is a marker-only adoption that keeps the idempotent `nextAttemptAt` backfill so a pre-v6 deployment is not skipped — run `npx convex run internal.migrations.bootstrapSchemaV10 '{}'` (the current marker, which supersedes V8/V9) after deploying this release so `checkCompatibility` passes. Rollback is a code rollback while both tables are empty; a populated v8 deployment (turn rows or stored citations) must stay on a compatible v8+ release until a separately tested downgrade exists. `citations` and `tutorTurns` join the S04 two-phase deletion protocol in `deleteProjectBatch`, so a deleted project leaves no turn or citation rows behind. As with S15/S18, `convex/_generated/api.d.ts` gained the `tutor` module entry by hand because offline `npx convex codegen` needs a configured deployment.
 
 ### Public surface and order of operations
 
@@ -288,7 +288,7 @@ The answer is consumed through the S11 `streamTutor` (provider streaming, `strea
 
 ## S19 language-practice tutor mode
 
-Schema/function version 9 adds one empty table and two additive validator changes on top of S14's version 8: `projects.languagePractice` (optional object with `targetLanguage` `en|es`, `level` `beginner|intermediate|advanced`, `correctionStyle` `immediate|end-of-turn`, `goals[]`, `roleplayScenarios[]`), a third `translation` member on `tutorTurns.answerBasis`, and the `practisedTopics` table (`ownerId`, `projectId`, `sessionId`, `turnId`, `topic`, `level`, `targetLanguage`, `createdAt`, indexed by `by_owner_project` and `by_owner_project_turn`). All three are optional/empty-start, so an S14-era row still validates with no backfill; `bootstrapSchemaV9` (renamed from V8, same replace-the-marker step) is a marker-only adoption that keeps the idempotent `nextAttemptAt` backfill — run `npx convex run internal.migrations.bootstrapSchemaV9 '{}'` after deploying this release so `checkCompatibility` passes. Rollback is a code rollback while `practisedTopics` is empty and no project carries `languagePractice`; a populated v9 deployment must stay on a compatible v9+ release until a separately tested downgrade exists. `practisedTopics` joins the S04 two-phase deletion protocol in `deleteProjectBatch`, so a deleted project leaves no practice history behind. As with S15/S18/S14, `convex/_generated/api.d.ts` gained the `languagePractice` module entry by hand because offline `npx convex codegen` needs a configured deployment.
+Schema/function version 10 (the union of S19 and S22, which each originally shipped as an independent version 9 on its own branch — see S22 below) adds one empty table and two additive validator changes on top of S14's version 8: `projects.languagePractice` (optional object with `targetLanguage` `en|es`, `level` `beginner|intermediate|advanced`, `correctionStyle` `immediate|end-of-turn`, `goals[]`, `roleplayScenarios[]`), a third `translation` member on `tutorTurns.answerBasis`, and the `practisedTopics` table (`ownerId`, `projectId`, `sessionId`, `turnId`, `topic`, `level`, `targetLanguage`, `createdAt`, indexed by `by_owner_project` and `by_owner_project_turn`). All three are optional/empty-start, so an S14-era row still validates with no backfill; `bootstrapSchemaV10` (renamed forward from V9/V8, same replace-the-marker step every version bump takes) is a marker-only adoption that keeps the idempotent `nextAttemptAt` backfill — run `npx convex run internal.migrations.bootstrapSchemaV10 '{}'` after deploying this release so `checkCompatibility` passes. Rollback is a code rollback while `practisedTopics` is empty and no project carries `languagePractice`; a populated v10 deployment must stay on a compatible v10+ release until a separately tested downgrade exists. `practisedTopics` joins the S04 two-phase deletion protocol in `deleteProjectBatch`, so a deleted project leaves no practice history behind. As with S15/S18/S14, `convex/_generated/api.d.ts` gained the `languagePractice` module entry by hand because offline `npx convex codegen` needs a configured deployment.
 
 ### Mode configuration and the minimal S14 hook
 
@@ -306,12 +306,108 @@ After a successful commit of a configured language-practice tutor turn, `runTurn
 
 ### Offline test evidence
 
-`packages/worker/tests/language-practice-prompt.test.ts` (7 tests): S14 base inherited byte-for-byte and still a pure function of project settings; all 3 levels × 2 correction styles × 2 target languages yield pairwise-different system instructions with the level/correction directives present; both styles demand short examples with a corrected sentence; language-stays and never-switch wording; every proficiency/pronunciation mention is a prohibition; config validation/normalisation with typed rejections; topic derivation bounds. `packages/worker/tests/language-practice-eval.test.ts` (5 tests) drives reviewed synthetic beginner and intermediate dialogue fixtures (`tests/fixtures/language-practice-dialogues.json`) through a deterministic stand-in tutor that reads only the system instruction: immediate vs end-of-turn change correction placement (interleaved vs after the last learner turn), level changes reply behaviour on the same dialogue, all 12 level/style/language prompts are distinct, and neither prompts nor transcripts claim proficiency or pronunciation. `packages/worker/tests/language-practice-translation.test.ts` (5 tests): ordinary practice text in any language never routes; quoted and wrapper-stripped explicit requests route to S18 with the expected source/target; the routed prompt is byte-identical to the S18 contract and pure across hostile/benign source text; the practice-language instruction is independent of learner text. `packages/api/tests/language-practice.test.ts` (7 tests) drives the real `runTurn` pipeline with a mocked NaN `fetch`: owner-validated configuration with anonymous/foreign denial; different level/style produce different provider prompts (byte-identical to the pure builder); language retention across learner texts; document injection cannot reach the language-practice system prompt (S14 citation contract still enforced); the explicit translation request path (S18 system/user contract, no embedding call, verbatim stored answer, `translation` basis, `translation-request` evidence, no topic row); topic recording (explicit and derived topics, idempotent replay, two-user/anonymous isolation, no proficiency fields in keys or values); concept-learning and unconfigured projects unchanged. `packages/api/tests/schema-lifecycle.test.ts` covers the v9 marker (clean reset, retry, newer-schema rejection, v8 S14-era adoption with readable pre-existing rows and no `languagePractice` property, plus the historical v2–v7 upgrades). No live NaN/LLM call exists anywhere in `pnpm test`; provider traffic is the mocked `https://api.nan.builders/v1` fetch interceptor only.
+`packages/worker/tests/language-practice-prompt.test.ts` (7 tests): S14 base inherited byte-for-byte and still a pure function of project settings; all 3 levels × 2 correction styles × 2 target languages yield pairwise-different system instructions with the level/correction directives present; both styles demand short examples with a corrected sentence; language-stays and never-switch wording; every proficiency/pronunciation mention is a prohibition; config validation/normalisation with typed rejections; topic derivation bounds. `packages/worker/tests/language-practice-eval.test.ts` (5 tests) drives reviewed synthetic beginner and intermediate dialogue fixtures (`tests/fixtures/language-practice-dialogues.json`) through a deterministic stand-in tutor that reads only the system instruction: immediate vs end-of-turn change correction placement (interleaved vs after the last learner turn), level changes reply behaviour on the same dialogue, all 12 level/style/language prompts are distinct, and neither prompts nor transcripts claim proficiency or pronunciation. `packages/worker/tests/language-practice-translation.test.ts` (5 tests): ordinary practice text in any language never routes; quoted and wrapper-stripped explicit requests route to S18 with the expected source/target; the routed prompt is byte-identical to the S18 contract and pure across hostile/benign source text; the practice-language instruction is independent of learner text. `packages/api/tests/language-practice.test.ts` (7 tests) drives the real `runTurn` pipeline with a mocked NaN `fetch`: owner-validated configuration with anonymous/foreign denial; different level/style produce different provider prompts (byte-identical to the pure builder); language retention across learner texts; document injection cannot reach the language-practice system prompt (S14 citation contract still enforced); the explicit translation request path (S18 system/user contract, no embedding call, verbatim stored answer, `translation` basis, `translation-request` evidence, no topic row); topic recording (explicit and derived topics, idempotent replay, two-user/anonymous isolation, no proficiency fields in keys or values); concept-learning and unconfigured projects unchanged. `packages/api/tests/schema-lifecycle.test.ts` covers the v10 marker (clean reset, retry, newer-schema rejection, v8 S14-era adoption with readable pre-existing project/turn/document rows, no `languagePractice` property and no `deletedAt` tombstone, plus the historical v2–v7 upgrades). No live NaN/LLM call exists anywhere in `pnpm test`; provider traffic is the mocked `https://api.nan.builders/v1` fetch interceptor only.
 
 ### Operational limits
 
 Configuration: at most 5 goals and 5 roleplay scenarios, 200 characters each; practised topics at most 120 characters; history queries at most 100 rows (default 50). Supported practice/translation languages are `en` and `es` until S18's typed set grows — an unsupported pair is rejected, never silently substituted. Translation-request detection is a documented heuristic (explicit cue + extractable text); ambiguous asks stay normal tutor turns and the separate S18 route remains available. A language-practice project without configuration falls back to the plain S14 prompt and records no topics. The prompt tells the model never to claim certification or score pronunciation from text; the platform itself computes no such score anywhere.
 
 
+## S22 document management and citation source viewer
+
+### Schema/function version 10 and migration
+
+This branch added two purely additive structures as its own version 9:
+`documents.deletedAt` (`v.optional(v.number())`, absent on every live row) as
+the document deletion tombstone, and the `documentChunks.by_document_seq` index
+the source viewer uses to load a cited chunk's bounded neighbours. No existing
+row is touched. S19 then landed an independent version 9 (language-practice
+config and `practisedTopics` history) on its own branch, so the merged release
+ships as **version 10**: `bootstrapSchemaV10` adopts any older deployment in
+place, superseding the `bootstrapSchemaV9`/`bootstrapSchemaV8` markers while
+keeping the idempotent `nextAttemptAt` backfill so a pre-v6 deployment is not
+skipped. Run `npx convex run internal.migrations.bootstrapSchemaV10 '{}'` after
+deploying this release; `checkCompatibility` then reports
+`foundSchemaVersion: 10`.
+Rollback is a code rollback while no tombstones exist — older releases ignore
+the optional field and never query the new index. A populated v8 deployment
+that keeps tombstones should stay on a compatible release: pre-S22 code does
+not filter `deletedAt`, so it would list a tombstone as a pending document.
+As with S13, the `sources` module entry in `convex/_generated/api.d.ts` is
+maintained by hand because offline `npx convex codegen` needs a configured
+deployment.
+
+### Public surface
+
+- `documents.listDocumentStatuses` (query) joins each **live** document with
+  its S09 job row (`status`, `attempts`, `maxAttempts`, `failureCode`,
+  `nextAttemptAt`, `chunkCount`), bounded to the 200 most recent documents per
+  project; tombstones are excluded, so the screen's badges are the real job
+  state rather than an optimistic copy. `UNAUTHENTICATED` without identity,
+  `NOT_FOUND` for a project the caller does not own.
+- `documents.retryDocument` (mutation) re-arms a dead-lettered `failed` job
+  (attempt budget reset to 0, `nextAttemptAt = now`, document back to
+  `pending`) and is a **no-op** for `queued`/`running`/`succeeded`, so a double
+  click or replayed request never creates a second job — `findOrCreateJob`'s
+  `by_document` uniqueness is the underlying guard. `unsupported` is terminal
+  by the S09 contract and returns `RETRY_NOT_ALLOWED`; a foreign, unknown or
+  tombstoned document returns `NOT_FOUND`.
+- `documents.deleteDocumentBatch` (mutation) mirrors the S04 two-phase
+  protocol with `limit` ≤ 100: the first call stamps the tombstone and flips
+  the document to `pending` (hiding it from every read surface and stopping a
+  late settle from resurrecting it); each batch deletes the **job first** (an
+  in-flight run then aborts before it can recreate chunks), then embeddings,
+  then chunks, all through `by_document` indexes; only when none remain are
+  the `privateFiles` row and the stored blob removed. The empty tombstone row
+  stays so an already-issued citation resolves to the explicit
+  `document-deleted` state, and it is swept with the project. Completion is
+  reported as `{ completed: true }`; a repeat call is an idempotent no-op, and
+  a foreign/unknown id is `NOT_FOUND`.
+- `sources.getCitationSource` (query) takes `projectId`, `documentId` and an
+  optional citation anchor (`chunkId`, `contentHash`) and returns either
+  `{ status: "ok", document, focus, before, after }` (focus carries the chunk
+  text, `seq`, `page`, `heading`, `contentHash`; neighbours are ≤3 chunks
+  before and ≤3 after, or the first chunk plus ≤5 ahead when opened without an
+  anchor) or `{ status: "unavailable", reason, document, source }` with S13's
+  exact missing-source reasons: `document-deleted` (owned tombstone),
+  `chunk-deleted`, `document-not-ready`, `content-version-mismatch`.
+  Ordering is deliberate: authentication → project ownership → document
+  ownership (a foreign or unknown id is the same non-enumerating `NOT_FOUND`
+  as S05/S08, so ownership probing cannot enumerate anyone's documents) →
+  tombstone → chunk resolution (a foreign chunk id answers identically to a
+  missing one, with no locator or text) → cited-hash freshness → readiness.
+  No `storage.getUrl`, no storage/file ids and no bytes ever leave the query:
+  the viewer reads the caller's own `documentChunks` rows, and original bytes
+  stay behind the authenticated `/private-files/:fileId` action.
+
+### Deletion and stale citations
+
+Deleting a document removes its job, embedding vectors, chunk rows, private
+file row and stored blob within the bounded loop, then leaves only the
+tombstone. Retrieval never offers the deleted source again (its vectors are
+gone), and opening an old citation link returns the explicit unavailable
+panel — never a broken link, crash or silent empty panel. While cleanup is in
+flight the tombstone's `pending` status makes any surviving vector classify as
+`document-not-ready` under S13, so a half-deleted document can never surface
+as a citation.
+
+### App surface and limits
+
+Hash routes `#/projects/:id/documents` and
+`#/projects/:id/sources/:documentId[/:chunkId][?hash=…]`. The list re-polls
+every 1.5 s **only while a job is live**, then stops; upload reuses one
+client-generated idempotency key per selected file; deletion drives the
+bounded loop with the same 100×50 caps as project deletion and surfaces an
+exhausted cap as `DELETION_INCOMPLETE`. Deliberate limits: extracted source
+text with page/heading anchors rather than rendered PDF pages; no in-app file
+download (that would need a tokenised request and is out of scope); the
+`#/preview/*` fixtures are `import.meta.env.DEV`-only and stripped from
+production builds. Evidence: `packages/api/tests/document-management.test.ts`
+(12), `packages/api/tests/citation-source.test.ts` (7),
+`packages/app/tests/e2e-documents.test.tsx` (3, upload-to-ready, citation
+access-denied, deletion cleanup) plus component tests, and screenshots in
+`docs/evidence/s22/`.
+
+## Plan and operational limits
 
 The selected plan is **Convex Free**, never metered Starter. Checked limits: 0.5 GB database, 1 GB/month database I/O, 1 GB file storage, 1 GB/month data egress, 0.5 GB search storage, 3,000 query-GB/month search and 1 million function calls/month. Reconfirm actual plan and current limits at any authorized provisioning/deployment; quota exhaustion must fail visibly and must not trigger paid upgrade. Roll back a failed release by redeploying the previous compatible commit; do not downgrade a populated schema until data compatibility is assessed.

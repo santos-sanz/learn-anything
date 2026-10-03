@@ -33,22 +33,25 @@ export const checkCompatibility = internalQuery({
 const BACKFILL_BATCH = 100;
 
 /**
- * S19 resumable marker migration for schema/function version 9: the
- * `practisedTopics` table (starts empty) and the optional `projects` /
- * `tutorTurns.answerBasis` validator additions (no backfill; old rows read as
- * unset or with their existing values). The migration is a marker write that
- * adopts any older deployment in place — the same replace-the-marker step
- * every version bump takes, superseding `bootstrap-schema-v8` while keeping
- * that migration's idempotent `nextAttemptAt` backfill so a pre-v6 deployment
- * is not skipped. Each call performs one bounded batch (indexed by
- * `documentId`) that backfills `nextAttemptAt` on S08-era rows so they enter
- * `by_status_next`, then records the cursor; a retry resumes after the last
- * processed document and the final call writes the version marker. Patches are
- * idempotent, so an interrupted batch that replays changes nothing twice.
- * `maxAttempts` stays optional and is resolved at read time, so no backfill
- * depends on deployment configuration.
+ * Resumable marker migration for schema/function version 10, which unions the
+ * two scopes that each shipped as a version 9 marker on their own branch:
+ * S22 document management (the optional `documents.deletedAt` deletion
+ * tombstone and the `documentChunks.by_document_seq` index) and S19 language
+ * practice (the optional `projects.languagePractice` settings, the third
+ * `tutorTurns.answerBasis` `translation` member and the empty `practisedTopics`
+ * table). Every addition is optional/empty-start, so an earlier row validates
+ * unchanged with no backfill — the migration is the marker write that adopts
+ * any older deployment in place, superseding the `bootstrap-schema-v9` and
+ * `bootstrap-schema-v8` markers while keeping their idempotent `nextAttemptAt`
+ * backfill so a pre-v6 deployment is not skipped. Each call performs one
+ * bounded batch (indexed by `documentId`) that backfills `nextAttemptAt` on
+ * S08-era rows so they enter `by_status_next`, then records the cursor; a retry
+ * resumes after the last processed document and the final call writes the
+ * version marker. Patches are idempotent, so an interrupted batch that replays
+ * changes nothing twice. `maxAttempts` stays optional and is resolved at read
+ * time, so no backfill depends on deployment configuration.
  */
-export const bootstrapSchemaV9 = internalMutation({
+export const bootstrapSchemaV10 = internalMutation({
   args: {},
   returns: migrationResult,
   handler: async (ctx) => {

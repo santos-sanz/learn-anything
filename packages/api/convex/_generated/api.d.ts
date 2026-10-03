@@ -22,6 +22,7 @@ import type * as migrations from "../migrations.js";
 import type * as projects from "../projects.js";
 import type * as redirects from "../redirects.js";
 import type * as retrieval from "../retrieval.js";
+import type * as sources from "../sources.js";
 import type * as stt from "../stt.js";
 import type * as translation from "../translation.js";
 import type * as tutor from "../tutor.js";
@@ -48,6 +49,7 @@ declare const fullApi: ApiFromModules<{
   projects: typeof projects;
   redirects: typeof redirects;
   retrieval: typeof retrieval;
+  sources: typeof sources;
   stt: typeof stt;
   translation: typeof translation;
   tutor: typeof tutor;

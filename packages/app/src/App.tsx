@@ -1,8 +1,10 @@
-import { useAuthActions, useConvexAuth } from "@convex-dev/auth/react";
+import { useAuthActions, useAuthToken, useConvexAuth } from "@convex-dev/auth/react";
 import { api } from "@learn-anything/api/convex/_generated/api";
 import { useConvex, useMutation } from "convex/react";
 import { useMemo } from "react";
 
+import { resolveConvexSiteUrl } from "./audioCapture.js";
+import { makeConvexDocumentsBackend } from "./data/documents.js";
 import { makeConvexProjectsBackend } from "./data/projects.js";
 import { Root, type AuthSession } from "./Root.js";
 import type { SignInSubmission } from "./SignInForm.js";
@@ -17,7 +19,16 @@ export function App() {
   const { signIn, signOut } = useAuthActions();
   const revokeConnectionTokens = useMutation(api.agentSessions.revokeAllConnectionTokens);
   const convex = useConvex();
+  const authToken = useAuthToken();
   const backend = useMemo(() => makeConvexProjectsBackend(convex), [convex]);
+  const documentsBackend = useMemo(
+    () =>
+      makeConvexDocumentsBackend(convex, {
+        getToken: () => authToken,
+        siteUrl: resolveConvexSiteUrl(import.meta.env.VITE_CONVEX_URL, import.meta.env.VITE_CONVEX_SITE_URL),
+      }),
+    [convex, authToken],
+  );
 
   const session = useMemo<AuthSession>(
     () => ({
@@ -36,5 +47,5 @@ export function App() {
     [isLoading, isAuthenticated, signIn, signOut, revokeConnectionTokens],
   );
 
-  return <Root session={session} backend={backend} />;
+  return <Root session={session} backend={backend} documents={documentsBackend} />;
 }
