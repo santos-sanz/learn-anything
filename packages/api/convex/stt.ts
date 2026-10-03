@@ -80,7 +80,7 @@ type ProviderFailure = { status: number; code: string; retryAfterMs?: number; up
  * Identity, policy, cancellation and argument problems keep their shared names.
  */
 export type ProviderFailureScope = {
-  readonly prefix: "STT" | "TRANSLATION";
+  readonly prefix: "STT" | "TRANSLATION" | "TTS";
   readonly inputTooLargeCode: string;
 };
 

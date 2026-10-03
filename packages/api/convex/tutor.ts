@@ -731,6 +731,36 @@ export const getTurn = query({
   },
 });
 
+/**
+ * The newest tutor turn of a project, as the S16 player's cancellation
+ * anchor: the response section shows an in-flight turn with its Cancel turn
+ * action, and cancelling stops playback before the mutation lands. Owner-only
+ * like every other read here.
+ */
+export const latestTurn = query({
+  args: { projectId: v.id("projects") },
+  returns: v.union(
+    v.null(),
+    v.object({
+      turnId: v.string(),
+      status: v.union(v.literal("running"), v.literal("completed"), v.literal("cancelled"), v.literal("failed")),
+      createdAt: v.number(),
+    }),
+  ),
+  handler: async (ctx, args) => {
+    const ownerId = await requireUserId(ctx);
+    await requireOwnedProject(ctx, ownerId, args.projectId);
+    const rows = await ctx.db
+      .query("tutorTurns")
+      .withIndex("by_owner_project", (q) => q.eq("ownerId", ownerId).eq("projectId", args.projectId))
+      .order("desc")
+      .take(1);
+    const turn = rows[0];
+    if (turn === undefined) return null;
+    return { turnId: turn.turnId, status: turn.status, createdAt: turn.createdAt };
+  },
+});
+
 const transcriptMessageValidator = v.object({
   _id: v.id("messages"),
   turnId: v.string(),

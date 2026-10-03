@@ -4,14 +4,16 @@ import { ConfirmDelete } from "../components/ConfirmDelete.js";
 import { ProjectForm } from "../components/ProjectForm.js";
 import { useProjects } from "../data/ProjectsProvider.js";
 import type { ProjectSummary } from "../data/projects.js";
+import type { TutorBackend } from "../data/tutor.js";
 import { navigate, serializeRoute } from "../router.js";
 import { TurnCapture } from "../TurnCapture.js";
+import { TutorResponseSection } from "../TutorResponseSection.js";
 import { dataErrorCode, mapDataError, modeLabel, toFormValues, toPatch, type ProjectFormValues } from "../view.js";
 
 type DetailState = { status: "loading" } | { status: "error"; error: unknown } | { status: "ready"; project: ProjectSummary };
 
-/** Project detail: read one owned project, edit goal/mode/name, record a microphone turn, delete with confirmation. */
-export function ProjectDetail({ id }: { id: string }) {
+/** Project detail: read one owned project, edit goal/mode/name, record a microphone turn, play tutor responses, delete with confirmation. */
+export function ProjectDetail({ id, tutor }: { id: string; tutor?: TutorBackend | undefined }) {
   const { get, update, remove } = useProjects();
   const [detail, setDetail] = useState<DetailState>({ status: "loading" });
   const [attempt, setAttempt] = useState(0);
@@ -152,6 +154,8 @@ export function ProjectDetail({ id }: { id: string }) {
       )}
 
       <TurnCapture projectId={id} siteUrl={import.meta.env.VITE_CONVEX_SITE_URL} />
+
+      {tutor !== undefined && <TutorResponseSection projectId={id} backend={tutor} siteUrl={import.meta.env.VITE_CONVEX_SITE_URL} />}
 
       <section className="danger-zone" aria-labelledby="delete-project-heading">
         <h2 id="delete-project-heading">Delete project</h2>
