@@ -167,8 +167,10 @@ export default defineSchema({
    * S09 chunk rows produced by the pluggable process step. The commit is an
    * upsert keyed by (`documentId`, `chunkKey`) where `chunkKey` derives from
    * `contentVersionKey` = `sha256(content):v<contract>`, so replayed jobs keep
-   * the same rows instead of appending duplicates. Source-aware chunking
-   * policy itself is S10.
+   * the same rows instead of appending duplicates. S10's source-aware step
+   * fills them with size/overlap windows whose locator names the page (PDF)
+   * or nearest heading path (Markdown/text); embedding/vector fields are
+   * deliberately absent here because S12 owns the index.
    */
   documentChunks: defineTable({
     ownerId: v.string(),

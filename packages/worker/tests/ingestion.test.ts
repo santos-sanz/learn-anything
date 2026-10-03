@@ -9,12 +9,12 @@ import {
   ParserError,
   UNSUPPORTED_PARSER_CODES,
   contentVersionKeyFor,
-  defaultProcessStep,
   isUnsupportedParserCode,
   parseDocument,
   parserErrorCode,
   resolveLimits,
   sha256Hex,
+  sourceAwareProcessStep,
 } from "../src/ingestion/index.js";
 
 const fixture = (name: string): Uint8Array => new Uint8Array(readFileSync(new URL(`../../api/tests/fixtures/${name}`, import.meta.url)));
@@ -156,18 +156,22 @@ test("document content is data: code-looking text is extracted verbatim, never r
   expect(text).toContain("<script>alert(1)</script>");
 });
 
-test("the default process step is one chunk per block and deterministic across runs", async () => {
+test("the process step merges one region into one deterministic chunk across runs", async () => {
   const bytes = fixture("lesson.md");
   const document = await parseDocument({ bytes, contentType: "text/markdown" });
   const key = contentVersionKeyFor(bytes);
-  const first = defaultProcessStep({ document, contentVersionKey: key });
-  const second = defaultProcessStep({ document, contentVersionKey: key });
+  const first = sourceAwareProcessStep({ document, contentVersionKey: key });
+  const second = sourceAwareProcessStep({ document, contentVersionKey: key });
   expect(first).toEqual(second);
-  expect(first).toHaveLength(document.blocks.length);
-  expect(first.map((chunk) => chunk.chunkKey)).toEqual([`${key}#0`, `${key}#1`, `${key}#2`]);
-  expect(first.map((chunk) => chunk.seq)).toEqual([0, 1, 2]);
+  // Every block shares the `Lesson one` heading path, so the default window
+  // holds the whole lesson as a single chunk with that locator.
+  expect(first).toHaveLength(1);
+  expect(first[0].text).toBe(document.blocks.map((block) => block.text).join("\n\n"));
+  expect(first[0].chunkKey).toBe(`${key}#0`);
+  expect(first[0].seq).toBe(0);
   expect(first[0].contentHash).toBe(sha256Hex(first[0].text));
   expect(first[0].contentVersionKey).toBe(key);
+  expect(first[0].locator).toEqual({ blockIndex: 0, page: null, heading: "Lesson one" });
 });
 
 test("the content version key combines the content hash with the contract version", async () => {

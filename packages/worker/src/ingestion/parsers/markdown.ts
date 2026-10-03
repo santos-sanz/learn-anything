@@ -3,15 +3,28 @@ import type { ExtractionBudget } from "../safeguards.js";
 
 const ATX_HEADING = /^ {0,3}#{1,6}[ \t]+(.*)$/;
 
+interface HeadingLevel {
+  level: number;
+  text: string;
+}
+
+/** `Chapter one > Section alpha`: the full path to the current heading. */
+function headingPath(stack: readonly HeadingLevel[]): string {
+  return stack.map((heading) => heading.text).join(" > ");
+}
+
 /**
- * Markdown extraction (S09): headings and blank-line paragraphs become blocks
- * with a heading hint. Fenced code is data like any other text: it is copied
- * verbatim into a block and never interpreted or executed. Size/overlap chunk
- * policy is deliberately absent; S10 replaces the process step that consumes
- * these blocks.
+ * Markdown extraction (S09 parsers, S10 heading paths): headings and
+ * blank-line paragraphs become blocks with a heading hint. The hint is the
+ * full path from the outermost heading to the nearest one above the block
+ * (`# A` / `## A1` -> `A > A1`), so S10 chunk locators keep the nesting a
+ * later citation can show; a level that rises again pops deeper levels off
+ * the stack. Fenced code is data like any other text: it is copied verbatim
+ * into a block and never interpreted or executed.
  */
 export function markdownBlocks(text: string, budget: ExtractionBudget): ExtractedBlock[] {
   const blocks: ExtractedBlock[] = [];
+  const stack: HeadingLevel[] = [];
   let heading: string | null = null;
   let current: string[] = [];
   const flush = (): void => {
@@ -32,11 +45,15 @@ export function markdownBlocks(text: string, budget: ExtractionBudget): Extracte
     const match = ATX_HEADING.exec(line);
     if (match !== null) {
       flush();
-      heading = match[1].trim();
+      const level = (line.trimStart().match(/^#+/) ?? ["#"])[0].length;
+      const title = match[1].trim();
+      while (stack.length > 0 && stack[stack.length - 1].level >= level) stack.pop();
+      stack.push({ level, text: title });
+      heading = headingPath(stack);
       budget.checkTime();
-      budget.addText(heading);
+      budget.addText(title);
       budget.addBlock();
-      blocks.push({ text: heading, locator: { blockIndex: blocks.length, page: null, heading } });
+      blocks.push({ text: title, locator: { blockIndex: blocks.length, page: null, heading } });
       continue;
     }
     current.push(line);
