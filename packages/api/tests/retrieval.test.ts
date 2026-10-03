@@ -383,7 +383,7 @@ test("two-project isolation: one project's chunks are never reachable from a sib
   expect(fromOneAgain.citations.map((citation) => citation.chunkId)).toEqual([one.documents[0].chunkIds[1]]);
 });
 
-test("gold-question fixtures rank the expected chunk within top-k", async () => {
+test("gold-question fixtures rank the gold chunk first, ahead of the distractors", async () => {
   const t = makeTest();
   const chunkIds = new Map<string, string>();
   const projectIds = new Map<string, string>();
@@ -404,6 +404,9 @@ test("gold-question fixtures rank the expected chunk within top-k", async () => 
   }
 
   for (const gold of goldQuestions) {
+    const fixtureChunks = goldCorpus
+      .find((project) => project.name === gold.project)
+      ?.documents.reduce((total, document) => total + document.chunks.length, 0);
     const result = ok(
       await retrieve(t, "learner-a", {
         projectId: projectIds.get(gold.project),
@@ -412,15 +415,21 @@ test("gold-question fixtures rank the expected chunk within top-k", async () => 
         topK: 3,
       }),
     );
+    // The corpus must outgrow top-k, otherwise "found in top-k" would hold
+    // for any ranking. All fixture chunks are seeded, so the candidate count
+    // mirrors the fixture; a shrink back to top-k-sized corpora fails here.
+    expect(fixtureChunks, `fixture corpus for ${gold.project} must exist`).toBeGreaterThan(3);
+    expect(result.diagnostics.candidates, `all ${gold.project} chunks must be candidates`).toBe(fixtureChunks);
     const expected = chunkIds.get(`${gold.project}/${gold.document}/${gold.chunk}`);
     expect(expected, `fixture map must contain ${gold.id}`).toBeDefined();
     const citation = result.citations.find((entry) => entry.chunkId === expected);
-    expect(citation, `gold chunk for ${gold.id} must be retrieved`).toBeDefined();
-    // Contract: the expected chunk stays inside the returned top-k. These
-    // fixtures are deterministic and currently rank it first; assert the
-    // contract so any future ranking change must still keep the gold chunk
-    // retrievable within top-k.
-    expect(citation?.rank, `gold chunk for ${gold.id} must rank within top-k`).toBeLessThanOrEqual(3);
+    expect(citation, `gold chunk for ${gold.id} must be retrieved within top-k`).toBeDefined();
+    // Discriminating contract: the gold chunk must beat every distractor and
+    // rank exactly first. With a corpus larger than top-k, any relevance
+    // regression that demotes the gold chunk below a distractor — or pushes it
+    // out of the slice entirely — fails this assertion instead of hiding
+    // inside a top-k that covers the whole corpus.
+    expect(citation?.rank, `gold chunk for ${gold.id} must rank 1 ahead of the distractors`).toBe(1);
   }
 });
 
