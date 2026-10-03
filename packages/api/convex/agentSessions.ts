@@ -160,6 +160,13 @@ export const issueConnectionToken = mutation({
   returns: v.object({ tokenId: v.id("agentConnectionTokens"), token: v.string(), issuedAt: v.number(), expiresAt: v.number() }),
   handler: async (ctx, args) => {
     const ownerId = await requireUserId(ctx);
+    const authSessionId = await getAuthSessionId(ctx);
+    // No email-only and no user-id-only binding: a connection token may only be
+    // issued from a full Convex Auth session subject (`userId|sessionId`). An
+    // identity that carries only an email address, only a user id, or a half of
+    // that subject is rejected here, so no stored record can ever be bound to a
+    // partial identity.
+    if (ownerId.length === 0 || typeof authSessionId !== "string" || authSessionId.length === 0) throw new ConvexError({ code: "UNAUTHENTICATED" });
     await requireOwnedProject(ctx, ownerId, args.projectId);
     const ttlSeconds = normalizeTtlSeconds(args.ttlSeconds);
     await cleanupExpiredTokens(ctx, ownerId, args.projectId);
@@ -167,8 +174,7 @@ export const issueConnectionToken = mutation({
     const tokenHash = await sha256Hex(token);
     const issuedAt = Date.now();
     const expiresAt = issuedAt + ttlSeconds * 1000;
-    const authSessionId = await getAuthSessionId(ctx);
-    const tokenId = await ctx.db.insert("agentConnectionTokens", { ownerId, projectId: args.projectId, tokenHash, issuedAt, expiresAt, revokedAt: null, lastVerifiedAt: null, verifyCount: 0, authSessionId: authSessionId ?? undefined });
+    const tokenId = await ctx.db.insert("agentConnectionTokens", { ownerId, projectId: args.projectId, tokenHash, issuedAt, expiresAt, revokedAt: null, lastVerifiedAt: null, verifyCount: 0, authSessionId });
     return { tokenId, token, issuedAt, expiresAt };
   },
 });

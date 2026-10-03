@@ -65,3 +65,31 @@ test("the OAuth callback rejects a redirect target outside the allowlist before 
   expect(String(error)).toContain("REDIRECT_NOT_ALLOWED");
   expect(attempted).toEqual([]);
 });
+
+test("the callback allowlist accepts only the configured origin, and a foreign origin is rejected before any outbound request", async () => {
+  const t = convexTest({ schema, modules });
+  const callback = "/api/auth/callback/github?code=forged-code&state=forged-state";
+
+  // Positive control: an allowlisted absolute URI round-trips through the
+  // cookie, passes the allowlist and reaches the GitHub code exchange (which
+  // the intercepting fetch records instead of performing).
+  const allowed = await captureNetwork(() => t.fetch(callback, { headers: { cookie: "__Host-githubRedirectTo=https://app.example.test/" } }));
+  expect(String(allowed.error)).not.toContain("REDIRECT_NOT_ALLOWED");
+  expect(allowed.attempted.some((url) => url.includes("github.com"))).toBe(true);
+
+  const foreign = [
+    "https://evil.example.test/steal",
+    "https://app.example.test.evil.example/steal",
+    "https://evil.example.test/?next=https://app.example.test/",
+    "//evil.example.test/steal",
+    "https://*.example.test/",
+    "javascript:alert(1)",
+    "https://app.example.test/not-configured",
+    "https://test-convex.example/",
+  ];
+  for (const redirectTo of foreign) {
+    const { attempted, error } = await captureNetwork(() => t.fetch(callback, { headers: { cookie: `__Host-githubRedirectTo=${redirectTo}` } }));
+    expect(String(error), redirectTo).toContain("REDIRECT_NOT_ALLOWED");
+    expect(attempted, redirectTo).toEqual([]);
+  }
+});

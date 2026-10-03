@@ -3,6 +3,7 @@ import { expect, test } from "vitest";
 
 import { api } from "../convex/_generated/api.js";
 import schema from "../convex/schema.js";
+import { expectTypedCode } from "./helpers/typedError.js";
 
 const modules = { "../convex/_generated/api.ts": () => import("../convex/_generated/api.js"), "../convex/projects.ts": () => import("../convex/projects.js"), "../convex/files.ts": () => import("../convex/files.js") };
 const identity = (subject: string) => ({ subject, issuer: "https://test.example" });
@@ -14,7 +15,7 @@ test("every public S05 function denies an anonymous caller", async () => {
   const storageId = await t.run(async (ctx) => ctx.storage.store(new Blob(["fixture"]))) as never;
   const fileId = await t.run(async (ctx) => ctx.db.insert("privateFiles", { ownerId: "a", projectId: project, storageId, contentType: "text/plain", createdAt: 1 }));
   const calls = [t.mutation(api.projects.createProject, { name: "A" }), t.query(api.projects.listProjects, {}), t.query(api.projects.getProject, { projectId: project }), t.mutation(api.projects.updateProject, { projectId: project, name: "stolen" }), t.mutation(api.projects.createGoal, { projectId: project, title: "g" }), t.mutation(api.projects.createSession, { projectId: project, sessionKey: "s" }), t.mutation(api.projects.createMessage, { projectId: project, sessionId: session, turnId: "t", idempotencyKey: "k", role: "learner", content: "x" }), t.mutation(api.projects.recordProgress, { projectId: project, eventType: "done" }), t.query(api.projects.listProjectRecords, { projectId: project }), t.mutation(api.projects.requestProjectDeletion, { projectId: project }), t.mutation(api.projects.deleteProjectBatch, { projectId: project, limit: 1 }), t.mutation(api.files.registerPrivateFile, { projectId: project, storageId, contentType: "text/plain" }), t.query(api.files.getPrivateFile, { projectId: project, fileId })];
-  for (const call of calls) await expect(call).rejects.toThrow("UNAUTHENTICATED");
+  for (const call of calls) await expectTypedCode(call, "UNAUTHENTICATED");
 });
 
 test("two-user matrix rejects foreign records and preserves server timestamps/dedupe", async () => {
