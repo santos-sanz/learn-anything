@@ -38,9 +38,9 @@ The app connects to Convex through the typed React client. It requests a
 short-lived, authenticated upload URL or calls an authorized application
 operation; it never calls NaN directly. The browser sends the selected
 project's audio/text turn only to an authenticated API boundary and receives a
-transcript, citations, and playable response reference. Frontend hosting is a
-separate deployment decision: neither Vite nor this ADR assigns it to
-Cloudflare Workers.
+transcript, citations, and playable response reference. Frontend hosting is no
+longer open: ADR-0002, amended by issue #38, binds it to Vercel (web client
+only); neither Vite nor this ADR ever assigns it to Cloudflare Workers.
 
 ## Consequences
 
