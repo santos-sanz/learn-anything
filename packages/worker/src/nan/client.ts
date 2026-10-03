@@ -6,6 +6,8 @@ import {
 import {
   defaultNanQuotaControls,
   NAN_BASE_URL,
+  NAN_EMBEDDING_DIMENSIONS,
+  NAN_EMBEDDING_MAX_BATCH,
   nanModels,
   nanVoices,
   NanAdapterError,
@@ -92,16 +94,28 @@ export class NanClient {
     } finally { reader.releaseLock(); }
   }
 
-  async embeddings(input: string[], options: NanFetchOptions = {}): Promise<number[][]> {
+  /**
+   * Embeds a batch with the full qwen3-embedding width. The batch-size and
+   * dimension contracts are enforced here (NaN documents 32 inputs per
+   * request and 4096 dimensions) so a provider contract drift surfaces as a
+   * typed adapter error instead of a silently short or wrong-width vector.
+   * The provider-reported model string is carried back for storage metadata;
+   * when the response omits it, the configured model id is used unchanged.
+   */
+  async embeddings(input: string[], options: NanFetchOptions = {}): Promise<{ vectors: number[][]; model: string }> {
+    if (input.length > NAN_EMBEDDING_MAX_BATCH) {
+      throw new NanAdapterError("NAN_INPUT_TOO_LARGE", `NaN embeddings accept at most ${NAN_EMBEDDING_MAX_BATCH} inputs per request.`);
+    }
     this.assertInput(input.join(""));
-    const response = await this.json<{ data?: Array<{ embedding?: unknown }> }>("embeddings", "/embeddings", {
+    const response = await this.json<{ model?: unknown; data?: Array<{ embedding?: unknown }> }>("embeddings", "/embeddings", {
       method: "POST", body: JSON.stringify({ model: nanModels.embedding, input, encoding_format: "float" }),
     }, options);
     const embeddings = response.data?.map((item) => item.embedding);
-    if (!embeddings || embeddings.length !== input.length || !embeddings.every((vector) => Array.isArray(vector) && vector.length === 4096 && vector.every((value) => typeof value === "number"))) {
-      throw new NanAdapterError("NAN_MALFORMED_RESPONSE", "NaN embeddings must contain one 4096-dimensional numeric vector per input.");
+    if (!embeddings || embeddings.length !== input.length || !embeddings.every((vector) => Array.isArray(vector) && vector.length === NAN_EMBEDDING_DIMENSIONS && vector.every((value) => typeof value === "number"))) {
+      throw new NanAdapterError("NAN_MALFORMED_RESPONSE", `NaN embeddings must contain one ${NAN_EMBEDDING_DIMENSIONS}-dimensional numeric vector per input.`);
     }
-    return embeddings as number[][];
+    const model = typeof response.model === "string" && response.model !== "" ? response.model : nanModels.embedding;
+    return { vectors: embeddings as number[][], model };
   }
 
   /** /rerank is NaN-specific and deliberately not folded into OpenAI-compatible methods. */

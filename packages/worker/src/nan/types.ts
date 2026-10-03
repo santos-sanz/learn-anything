@@ -21,6 +21,16 @@ export type NanSpeechModel = typeof nanModels.speech;
 export type NanVoice = (typeof nanVoices)[keyof typeof nanVoices];
 export type NanLanguage = "en" | "es";
 
+/**
+ * NaN publishes qwen3-embedding at 4096 dimensions (checked 2026-10-03 against
+ * https://nan.builders/docs/models) with a maximum batch size of 32 inputs.
+ * The dimension is a contract, not a hint: the adapter rejects any other
+ * width, Convex stores the vectors untruncated at this width, and S12's index
+ * is declared at the same number.
+ */
+export const NAN_EMBEDDING_DIMENSIONS = 4096;
+export const NAN_EMBEDDING_MAX_BATCH = 32;
+
 export interface NanQuotaControls {
   readonly timeoutMs: number;
   readonly maxRetries: 0;
