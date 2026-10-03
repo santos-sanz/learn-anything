@@ -250,6 +250,10 @@ const retrievalResultValidator = v.union(
  *   owner/project, or chunk/document ids that disagree with each other) →
  *   dropped: it is a scope violation, never a citation and never a "missing"
  *   report, because even its identifiers must not leak;
+ * - an embedding row deleted between `vectorSearch` and this recheck is
+ *   silently dropped too — with the row already gone its ownership can no
+ *   longer be verified, so it is safe to lose and is reported neither as a
+ *   citation nor as a missing source;
  * - ownership holds but the source is unusable (chunk deleted, document
  *   deleted, document not `ready`, or the row's content version no longer
  *   matches the chunk) → reported as a `missingSources` entry with the
